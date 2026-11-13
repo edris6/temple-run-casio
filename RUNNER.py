@@ -1,0 +1,2 @@
+import TEMPLE
+TEMPLE.main()
