@@ -1,0 +1,161 @@
+'@name TRUN
+ClrText
+2→A
+0→S
+0→C
+0→P
+0→N
+0→J
+0→T
+1→G
+1→D
+RanInt#(1,3)→B
+RanInt#(1,4)→H
+Locate 1,1,"SCORE:"
+Locate 8,1,S
+Locate 1,7,"        L    C    R"
+Locate 4+5A,6,"R"
+If H=1
+Then
+Locate 4+5B,2,"C"
+IfEnd
+If H=2
+Then
+Locate 4+5B,2,"G"
+IfEnd
+If H=3
+Then
+Locate 4+5B,2,"L"
+IfEnd
+If H=4
+Then
+Locate 4+5B,2,"B"
+IfEnd
+While G=1
+Getkey→K
+If K≠P
+Then
+If K=38
+Then
+If A>1
+Then
+A-1→A
+IfEnd
+IfEnd
+If K=27
+Then
+If A<3
+Then
+A+1→A
+IfEnd
+IfEnd
+If K=28
+Then
+1→J
+3→N
+IfEnd
+If K=37
+Then
+2→J
+3→N
+IfEnd
+If K=29
+Then
+0→G
+IfEnd
+IfEnd
+K→P
+T+1→T
+If T≥40
+Then
+0→T
+Locate 4+5B,D+1," "
+D+1→D
+If D=5
+Then
+If A=B
+Then
+If H=1
+Then
+C+1→C
+S+25→S
+IfEnd
+If H=2
+Then
+If J≠1
+Then
+0→G
+IfEnd
+IfEnd
+If H=3
+Then
+If J≠1
+Then
+0→G
+IfEnd
+IfEnd
+If H=4
+Then
+If J≠2
+Then
+0→G
+IfEnd
+IfEnd
+IfEnd
+If G=1
+Then
+S+10→S
+Locate 8,1,S
+RanInt#(1,3)→B
+RanInt#(1,4)→H
+1→D
+IfEnd
+IfEnd
+If G=1
+Then
+If H=1
+Then
+Locate 4+5B,D+1,"C"
+IfEnd
+If H=2
+Then
+Locate 4+5B,D+1,"G"
+IfEnd
+If H=3
+Then
+Locate 4+5B,D+1,"L"
+IfEnd
+If H=4
+Then
+Locate 4+5B,D+1,"B"
+IfEnd
+Locate 1,6,"                     "
+If J=0
+Then
+Locate 4+5A,6,"R"
+IfEnd
+If J=1
+Then
+Locate 4+5A,6,"J"
+IfEnd
+If J=2
+Then
+Locate 4+5A,6,"S"
+IfEnd
+If N>0
+Then
+N-1→N
+If N=0
+Then
+0→J
+IfEnd
+IfEnd
+IfEnd
+IfEnd
+WhileEnd
+ClrText
+Locate 1,2,"RUN ENDED"
+Locate 1,3,"SCORE:"
+Locate 8,3,S
+Locate 1,4,"COINS:"
+Locate 8,4,C

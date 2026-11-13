@@ -1,12 +1,14 @@
 # Temple Runner for Casio fx-CG50
 
-A small, original, turn-based runner inspired by Temple Run. This is an early
-prototype, not the Unity game or a real-time port. It uses only Python's text
-screen and does not include any assets, code, or binaries from the referenced
-game repository. Score values and course generation are new design choices,
-not recovered game rules.
+Two small, original runner prototypes inspired by Temple Run. They do not
+include assets, code, or binaries from the referenced game repository. Score
+values and course generation are new design choices, not recovered game rules.
 
-## Play
+The newer [real-time Casio BASIC prototype](realtime/README.md) uses the arrow
+keys and advances automatically. The Python version below is turn-based and
+can also be played on a computer. Neither has been tested on physical hardware.
+
+## Play the Python prototype
 
 Each turn, the next tile is shown across three lanes, with your runner (`R`)
 below. `!` marks a hazard, `$` a coin and `-` an empty lane. Enter a number
@@ -24,7 +26,7 @@ You can also move out of a hazard's lane. Each successful tile earns 10
 points, and a coin earns another 25. Each turn resolves the visible tile;
 there is no timer or reaction-speed requirement.
 
-## Run on the calculator
+## Run the Python prototype on the calculator
 
 The fx-CG50 needs Python mode installed. Once you have a suitable USB data
 cable, connect the calculator to your computer and use its USB storage mode.
@@ -56,11 +58,9 @@ python3 -m unittest discover -s tests -v
 Casio lists a 384 x 216 color display and USB connection for the fx-CG50; its
 Python environment is an adapted MicroPython, with a drawing area of 384 x 192
 pixels. Its documented Python input waits for entry, while the built-in
-Basic-like language has a `Getkey` polling command. A real-time graphical runner
-will need a different input strategy, likely Casio BASIC or a native add-in,
-and testing on the calculator or a compatible emulator. The gameplay loop,
-collision checks, score and simple course model here are a starting point for
-that work; graphics, corners, pacing and saves are still unimplemented.
+Basic-like language has a `Getkey` polling command. The real-time prototype
+uses that command and the text screen. A graphical 3D-style game, corners,
+calibrated pacing and saves remain future work.
 
 ## Safety and provenance
 
