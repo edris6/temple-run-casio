@@ -1,5 +1,11 @@
 # Native fx-CG50 port (work in progress)
 
+**Latest source status:** connected-turn and renderer performance work is in
+progress and is not yet validated in the calculator emulator. The first-turn
+emulator test failed before the latest optimization. The details below describe
+the earlier stable opening-course checkpoint; see [HANDOFF.md](../HANDOFF.md)
+for the current state and next checks.
+
 This directory begins a native C port of the Unity reconstruction at
 [`LuciusTran/templerun` commit `65964ad`](https://github.com/LuciusTran/templerun/tree/65964ad).
 It does not run Unity or claim that the incomplete reconstruction is the full

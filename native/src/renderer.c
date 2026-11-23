@@ -6,7 +6,23 @@
 typedef struct { float x, y, z; } Vec3;
 typedef struct { int x, y; int32_t inv_z, u, v; } Projected;
 typedef struct { Vec3 p; float u, v; } ClipVertex;
-typedef struct { int kind; float forward, height, lateral, side; } Transform;
+typedef struct {
+    int kind;
+    float forward, height, lateral, side;
+    bool world;
+    float tile_x, tile_z, camera_x, camera_z;
+    float view_x, view_z;
+} Transform;
+
+/* Most reconstructed meshes share vertices between triangles. Transform each
+ * vertex once per instance instead of repeating costly software float work. */
+#define VERTEX_CACHE_CAPACITY 1024
+static ClipVertex vertex_cache[VERTEX_CACHE_CAPACITY];
+static Projected projection_cache[VERTEX_CACHE_CAPACITY];
+static unsigned char projection_valid[VERTEX_CACHE_CAPACITY];
+
+static int dir_x(int d) { return d == 2 ? 1 : d == 4 ? -1 : 0; }
+static int dir_z(int d) { return d == 1 ? 1 : d == 3 ? -1 : 0; }
 
 static int clampi(int x, int a, int b) { return x < a ? a : x > b ? b : x; }
 static int edge(Projected a, Projected b, int x, int y)
@@ -15,13 +31,24 @@ static int edge(Projected a, Projected b, int x, int y)
 static Vec3 world_vertex(const float *v, Transform t)
 {
     Vec3 p;
-    if ((t.kind >= 1 && t.kind <= 4) || t.kind == 6 || t.kind == 7) {
+    if ((t.kind >= 1 && t.kind <= 4) || (t.kind >= 6 && t.kind <= 13)) {
         /* Object81-Pivot's raw model coordinates include a large local pivot.
          * The corresponding prefab cancels it before rotating the mesh. */
-        float origin_x = t.kind == 1 ? 559.9522f : t.kind == 6 ? 629.9522f :
-            t.kind == 7 ? 689.9522f : t.kind == 3 ? 1349.952f : 1359.9521f;
-        float origin_z = t.kind == 1 ? -1335.3497f : t.kind >= 6 ? -1275.3496f : t.kind == 2 ? -675.3496f :
-            t.kind == 3 ? -575.3496f : -415.3496f;
+        float origin_x, origin_z;
+        switch (t.kind) {
+            case 1: origin_x = 559.9522f; origin_z = -1335.3497f; break;
+            case 2: origin_x = 1359.9521f; origin_z = -675.3496f; break;
+            case 3: origin_x = 1349.952f; origin_z = -575.3496f; break;
+            case 4: origin_x = 1359.9521f; origin_z = -415.3496f; break;
+            case 6: origin_x = 629.9522f; origin_z = -1275.3496f; break;
+            case 7: origin_x = 689.9522f; origin_z = -1275.3496f; break;
+            case 8: origin_x = 639.9522f; origin_z = -1335.3496f; break;
+            case 9: origin_x = 699.9522f; origin_z = -1335.3496f; break;
+            case 10: origin_x = 569.9522f; origin_z = -1405.3497f; break;
+            case 11: origin_x = 1269.9521f; origin_z = -645.3496f; break;
+            case 12: origin_x = 1269.952f; origin_z = -575.3496f; break;
+            default: origin_x = 1269.952f; origin_z = -375.3496f; break;
+        }
         p.x = -(v[0] + origin_x) - t.lateral;
         p.y = v[2] + 30.0f - 15.0f - 9.0f;
         p.z = v[1] + origin_z + t.forward + 10.0f;
@@ -34,6 +61,12 @@ static Vec3 world_vertex(const float *v, Transform t)
         p.y = v[1] + 3.0f - 9.0f;
         p.z = v[2] + t.forward + 10.0f;
     }
+    if (t.world && t.kind != 0) {
+        float x = p.x + t.tile_x - t.camera_x;
+        float z = p.z - 10.0f + t.tile_z - t.camera_z;
+        p.x = x * t.view_z - z * t.view_x;
+        p.z = x * t.view_x + z * t.view_z + 30.0f;
+    }
     return p;
 }
 
@@ -43,6 +76,16 @@ static int project(Vec3 p, Projected *out)
     out->x = clampi((int)(TR_WIDTH / 2 + p.x * 105.0f / p.z), -2048, 2048);
     out->y = clampi((int)(43 - p.y * 105.0f / p.z), -2048, 2048);
     out->inv_z = (int32_t)(16777216.0f / p.z);
+    return 1;
+}
+
+static int project_vertex(ClipVertex vertex, Projected *out)
+{
+    if (!project(vertex.p, out)) return 0;
+    float u = fmaxf(-200.0f, fminf(200.0f, vertex.u));
+    float v = fmaxf(-200.0f, fminf(200.0f, vertex.v));
+    out->u = (int32_t)(u * (128.0f * 65536.0f));
+    out->v = (int32_t)((1.0f-v) * (128.0f * 65536.0f));
     return 1;
 }
 
@@ -121,25 +164,36 @@ static int clip_near(const ClipVertex in[3], ClipVertex out[4])
 static void mesh(TRFramebuffer *fb, const TRMesh *m, Transform t, uint16_t base)
 {
     if (!m || !m->vertices || !m->indices) return;
+    bool cache = m->vertex_count <= VERTEX_CACHE_CAPACITY;
+    if (cache) for (size_t i = 0; i < m->vertex_count; i++) {
+        vertex_cache[i].p = world_vertex(m->vertices[i], t);
+        vertex_cache[i].u = m->uvs ? m->uvs[i][0] : 0;
+        vertex_cache[i].v = m->uvs ? m->uvs[i][1] : 0;
+        projection_valid[i] = (unsigned char)project_vertex(vertex_cache[i], &projection_cache[i]);
+    }
     for (size_t i = 0; i + 2 < m->index_count; i += 3) {
         unsigned ia = m->indices[i], ib = m->indices[i+1], ic = m->indices[i+2];
         if (ia >= m->vertex_count || ib >= m->vertex_count || ic >= m->vertex_count) continue;
         unsigned ids[] = {ia,ib,ic};
+        if (cache && projection_valid[ia] && projection_valid[ib] && projection_valid[ic]) {
+            triangle(fb, projection_cache[ia], projection_cache[ib], projection_cache[ic],
+                (uint16_t)(base + ((i / 3) % 3) * 0x0821), m->uvs ? m->texture : NULL);
+            continue;
+        }
         ClipVertex input[3], clipped[4];
         for (int k = 0; k < 3; k++) {
-            input[k].p = world_vertex(m->vertices[ids[k]], t);
-            input[k].u = m->uvs ? m->uvs[ids[k]][0] : 0;
-            input[k].v = m->uvs ? m->uvs[ids[k]][1] : 0;
+            if (cache) input[k] = vertex_cache[ids[k]];
+            else {
+                input[k].p = world_vertex(m->vertices[ids[k]], t);
+                input[k].u = m->uvs ? m->uvs[ids[k]][0] : 0;
+                input[k].v = m->uvs ? m->uvs[ids[k]][1] : 0;
+            }
         }
         int count = clip_near(input, clipped);
         Projected p[4];
         int valid = 1;
         for (int k = 0; k < count; k++) {
-            if (!project(clipped[k].p, &p[k])) { valid = 0; break; }
-            float u = fmaxf(-200.0f, fminf(200.0f, clipped[k].u));
-            float v = fmaxf(-200.0f, fminf(200.0f, clipped[k].v));
-            p[k].u = (int32_t)(u * (128.0f * 65536.0f));
-            p[k].v = (int32_t)((1.0f-v) * (128.0f * 65536.0f));
+            if (!project_vertex(clipped[k], &p[k])) { valid = 0; break; }
         }
         if (!valid) continue;
         for (int k = 1; k + 1 < count; k++)
@@ -148,68 +202,87 @@ static void mesh(TRFramebuffer *fb, const TRMesh *m, Transform t, uint16_t base)
     }
 }
 
-static void render_frame(TRFramebuffer *fb, const TRCourse *course, const TRMesh *path,
-    const TRMesh *player, const TRMesh *left_corner, const TRMesh *right_corner,
-    float forward, float height, float lateral)
+static void clear_frame(TRFramebuffer *fb)
 {
     for (int y = 0; y < TR_HEIGHT; y++) for (int x = 0; x < TR_WIDTH; x++) {
         int i = y * TR_WIDTH + x;
         fb->pixels[i] = y < 43 ? 0x8d9a : 0x3326;
         fb->depth[i] = 0;
     }
-    float offset = fmodf(forward, 60.0f);
-    int base_tile = (int)(forward / 60.0f);
-    for (int i = -1; i < 5; i++) {
-        float center = i * 60.0f - offset;
-        if (center + 40.0f < 3.0f || center - 20.0f > 250.0f) continue;
-        int tile = base_tile + i;
-        if (course && tile > TR_OPENING_TILES - 1) continue;
-        if (course && tile == TR_OPENING_TILES - 1) {
-            int left = course->corner_direction < 0;
-            Transform t = {left ? 6 : 7, center, 0, lateral, 0};
-            mesh(fb, left ? left_corner : right_corner, t, 0x7be9);
-        } else {
-            Transform t = {1, center, 0, lateral, 0};
-            mesh(fb, path, t, 0x7be9);
-        }
-    }
-    Transform runner = {0, 0, height, lateral, 0};
-    mesh(fb, player, runner, 0x9a63);
 }
 
 void tr_render_frame(TRFramebuffer *fb, const TRMesh *path, const TRMesh *player,
     float forward, float height, float lateral)
 {
-    render_frame(fb, NULL, path, player, NULL, NULL, forward, height, lateral);
+    clear_frame(fb);
+    float offset = fmodf(forward, 60.0f);
+    for (int i = -1; i < 5; i++) {
+        float center = i * 60.0f - offset;
+        if (center + 40.0f < 3.0f || center - 20.0f > 250.0f) continue;
+        Transform t = {.kind=1, .forward=center, .lateral=lateral};
+        mesh(fb, path, t, 0x7be9);
+    }
+    Transform runner = {.kind=0, .height=height};
+    mesh(fb, player, runner, 0x9a63);
 }
 
-void tr_render_opening(TRFramebuffer *fb, const TRCourse *course, const TRMesh *path,
-    const TRMesh *player, const TRMesh *left_corner, const TRMesh *right_corner,
-    float forward, float height, float lateral)
+static Transform world_transform(const TRCourse *course, int kind, float x, float z)
 {
-    render_frame(fb, course, path, player, left_corner, right_corner, forward, height, lateral);
+    Transform t = {0};
+    t.kind = kind; t.world = true; t.tile_x = x; t.tile_z = z;
+    t.camera_x = course->x; t.camera_z = course->z;
+    t.view_x = course->view_x; t.view_z = course->view_z;
+    if (t.view_x == 0 && t.view_z == 0) {
+        t.view_x = (float)dir_x(course->heading); t.view_z = (float)dir_z(course->heading);
+    }
+    return t;
 }
 
-void tr_render_course(TRFramebuffer *fb, const TRCourse *course, const TRMesh *jump,
-    const TRMesh *slide, const TRMesh *trip, const TRMesh *coin,
-    float forward, float lateral)
+static int corner_index(const TRTile *tile)
 {
-    for (int i = 0; i < TR_OPENING_TILES - 1; i++) {
+    static const int left[] = {0,0,2,3,1};
+    static const int right[] = {0,1,0,2,3};
+    return tile->turn < 0 ? left[tile->incoming] : right[tile->incoming];
+}
+
+void tr_render_world(TRFramebuffer *fb, const TRCourse *course, const TRAssets *assets,
+    float height)
+{
+    clear_frame(fb);
+    for (int i = 0; i < course->count; i++) {
         const TRTile *tile = &course->tiles[i];
-        float center = i * 60.0f - forward;
-        if (center < -30.0f || center > 260.0f) continue;
+        float x = tile->x-course->x, z = tile->z-course->z;
+        float vx = course->view_x, vz = course->view_z;
+        if (vx == 0 && vz == 0) { vx = (float)dir_x(course->heading); vz = (float)dir_z(course->heading); }
+        float ahead = x*vx+z*vz;
+        float side = x*vz-z*vx;
+        if (ahead < -70 || ahead > 280 || fabsf(side) > 150) continue;
+        int axis = tile->incoming == 1 || tile->incoming == 3 ? 0 : 1;
+        int kind = axis ? 10 : 1;
+        const TRMesh *ground = assets->path[axis];
+        if (tile->turn) {
+            int corner = corner_index(tile);
+            kind = 6 + corner;
+            ground = assets->corner[corner];
+        }
+        Transform t = world_transform(course, kind, tile->x, tile->z);
+        mesh(fb, ground, t, 0x7be9);
         if (tile->obstacle) {
-            int kind = tile->obstacle == 1 ? 2 : tile->obstacle == 2 ? 3 : 4;
-            const TRMesh *obstacle = tile->obstacle == 1 ? jump : tile->obstacle == 2 ? slide : trip;
-            Transform t = {kind,center,0,lateral,0};
+            kind = (tile->obstacle == 1 ? 2 : tile->obstacle == 2 ? 3 : 4) + (axis ? 9 : 0);
+            const TRMesh *obstacle = tile->obstacle == 1 ? assets->jump[axis] :
+                tile->obstacle == 2 ? assets->slide[axis] : assets->trip[axis];
+            t = world_transform(course, kind, tile->x, tile->z);
             mesh(fb, obstacle, t, 0x7be9);
         }
         if (tile->coin_lane != 2) for (int j = 0; j < 6; j++) {
             if (tile->coins_collected & (1u << j)) continue;
-            float position = center - 24.0f + j * 9.0f;
-            if (position < -10.0f || position > 220.0f) continue;
-            Transform t = {5,position,0,lateral,6.0f * tile->coin_lane};
-            mesh(fb, coin, t, 0xfc00);
+            float along = -24.0f + j * 9.0f, lane = 6.0f * tile->coin_lane;
+            float coin_x = tile->x + along*dir_x(tile->incoming) + lane*dir_z(tile->incoming);
+            float coin_z = tile->z + along*dir_z(tile->incoming) - lane*dir_x(tile->incoming);
+            t = world_transform(course, 5, coin_x, coin_z);
+            mesh(fb, assets->coin, t, 0xfc00);
         }
     }
+    Transform runner = {.kind=0, .height=height};
+    mesh(fb, assets->player, runner, 0x9a63);
 }

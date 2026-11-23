@@ -1,10 +1,43 @@
 # Temple Run fx-CG50 port: handoff
 
-Development was stopped at the user's request. Resume from commit `ca025d1`
-and this document. The original request is a native port of the reconstructed
-Unity game, not the earlier Python or Casio BASIC approximations.
+Development was stopped at the user's request. The original request is a
+native port of the reconstructed Unity game, not the earlier Python or Casio
+BASIC approximations.
 
-## Current state
+## Latest continuation: unfinished connected turns
+
+The stable opening-course checkpoint is commit `ca025d1`. After that checkpoint,
+work began on a bounded, continuously generated course with world coordinates,
+left/right turns, early-turn buffering, horizontal paths and all four original
+corner meshes. The current source also adds an approximate smoothed camera and
+per-instance vertex caching. It stops safely on later hole/narrow terrain,
+which is not implemented. Missing a turn currently causes immediate death at
+the tile edge; the Unity reconstruction falls off the track instead.
+
+**This continuation is work in progress, not a verified playable build.** A
+cross-built intermediate version ran in the emulator, but a scripted first
+turn was missed and the runner died. Instrumentation showed roughly 11 rendered
+frames over the first 5.5 emulated seconds; the slow renderer and input latency
+need further investigation. The vertex cache was added afterward, but has not
+been rebuilt for or measured on the calculator emulator. Do not claim the turn
+works or that frame rate is fixed.
+
+The latest host C tests passed with AddressSanitizer and UndefinedBehaviorSanitizer,
+including seeded course generation, turn buffering, wrong/missed turns, a long
+bounded-course simulation, and input/session checks. A desktop preview rendered
+with the vertex cache was byte-identical to the preceding preview. These checks
+do not establish that turning, rendering, performance or input works on the
+calculator. The local `native/TRUN3D.g3a` is an older intermediate build and
+does not include the latest vertex-cache changes; rebuild before testing.
+
+Next, rebuild with fxSDK, repeat the scripted first-turn emulator run, measure
+frame rate and input timing, and fix any issues before relying on the connected
+course. `native/README.md` describes the earlier stable checkpoint and may not
+yet reflect this unfinished continuation. The reference asset importer now also
+requires the horizontal path/obstacle meshes and the remaining two corner
+meshes; generated original assets remain Git-ignored and must stay local.
+
+## Earlier stable checkpoint
 
 - `native/` contains the fx-CG50 C/gint port. The opening straight uses the
   reference reconstruction's seeded course rules, coin positions, obstacle
@@ -32,7 +65,7 @@ Unity game, not the earlier Python or Casio BASIC approximations.
 - Neither a physical calculator nor its timing, memory and input behavior has
   been tested. The emulator result does not establish hardware compatibility.
 
-## Next work
+## Remaining work after the stable checkpoint
 
 1. Extend the track scheduler past the first 12 tiles and port turn buffering,
    connected corners, heading/camera changes, ground regions and missed turns

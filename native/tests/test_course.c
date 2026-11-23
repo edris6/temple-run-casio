@@ -8,7 +8,11 @@ static TRCourse empty_course(void)
 {
     TRCourse c;
     memset(&c, 0, sizeof(c));
-    for (int i = 0; i < TR_OPENING_TILES; i++) c.tiles[i].coin_lane = 2;
+    c.count = TR_OPENING_TILES; c.heading = 1;
+    for (int i = 0; i < TR_OPENING_TILES; i++) {
+        c.tiles[i].index = i; c.tiles[i].z = i*60;
+        c.tiles[i].incoming = c.tiles[i].outgoing = 1; c.tiles[i].coin_lane = 2;
+    }
     return c;
 }
 
@@ -21,7 +25,8 @@ int main(void)
     /* Seed 1 checked against the managed reference algorithm and host scheduler. */
     const int expected_obstacles[] = {0,0,0,0,0,0,0,3,0,0,0,0};
     const int expected_lanes[] = {2,-1,-1,0,2,2,0,2,-1,0,2,2};
-    assert(a.corner_direction == -1);
+    assert(a.tiles[11].turn == -1 && a.tiles[11].outgoing == 4);
+    assert(a.tiles[12].x == -60 && a.tiles[12].z == 660 && a.tiles[12].incoming == 4);
     for (int i = 0; i < TR_OPENING_TILES; i++) {
         assert(a.tiles[i].obstacle == expected_obstacles[i]);
         assert(a.tiles[i].coin_lane == expected_lanes[i]);
@@ -38,42 +43,85 @@ int main(void)
     TRRunner runner;
     TRCourse c = empty_course();
     c.tiles[2].obstacle = 1;
-    tr_reset(&runner); runner.forward = 104;
+    tr_reset(&runner); runner.forward = 104; c.z = 122;
     tr_course_step(&c, &runner, 102, 0, 0);
     assert(runner.dead && c.tiles[2].hit);
     c = empty_course(); c.tiles[2].obstacle = 1;
-    tr_reset(&runner); runner.forward = 104; runner.height = 6;
+    tr_reset(&runner); runner.forward = 104; runner.height = 6; c.z = 122;
     tr_course_step(&c, &runner, 102, 0, 0);
     assert(!runner.dead && !c.tiles[2].hit);
 
     c = empty_course(); c.tiles[2].obstacle = 2;
-    tr_reset(&runner); runner.forward = 98;
+    tr_reset(&runner); runner.forward = 98; c.z = 116;
     tr_course_step(&c, &runner, 96, 0, 0);
     assert(runner.dead);
     c = empty_course(); c.tiles[2].obstacle = 2;
-    tr_reset(&runner); runner.forward = 98; runner.sliding = true;
+    tr_reset(&runner); runner.forward = 98; runner.sliding = true; c.z = 116;
     tr_course_step(&c, &runner, 96, 0, 0);
     assert(!runner.dead);
 
     c = empty_course(); c.tiles[2].obstacle = 3;
-    tr_reset(&runner); runner.forward = 100; runner.stumble_kill_timer = 10;
+    tr_reset(&runner); runner.forward = 100; runner.stumble_kill_timer = 10; c.z = 118;
     tr_course_step(&c, &runner, 98, 0, 0);
     assert(!runner.dead && runner.stumbling && runner.speed == 85);
 
-    c = empty_course(); c.tiles[6].coin_lane = 0;
-    tr_reset(&runner); runner.forward = 316;
+    c = empty_course(); c.current = 6; c.tiles[6].coin_lane = 0;
+    tr_reset(&runner); runner.forward = 316; c.z = 335;
     tr_course_step(&c, &runner, 315, 0, 0);
     assert(runner.coins == 1 && c.tiles[6].coins_collected == 1);
-    tr_course_step(&c, &runner, 315, 0, 0);
+    tr_course_step(&c, &runner, 316, 0, 0);
     assert(runner.coins == 1);
-    c = empty_course(); c.tiles[6].coin_lane = 1;
-    tr_reset(&runner); runner.forward = 316;
+    c = empty_course(); c.current = 6; c.tiles[6].coin_lane = 1;
+    tr_reset(&runner); runner.forward = 316; c.z = 335;
     tr_course_step(&c, &runner, 315, 0, 0);
     assert(runner.coins == 0);
 
-    c = empty_course(); tr_reset(&runner); runner.forward = 628;
-    tr_course_step(&c, &runner, 627, 0, 0);
-    assert(c.corner_reached);
+    tr_course_init(&c, 1); tr_reset(&runner); runner.stumble_kill_timer = 10;
+    c.current = 10; c.z = 610;
+    float lateral = 4;
+    tr_course_request_turn(&c, &runner, &lateral, -1);
+    assert(c.buffered_turn == -1);
+    c.current = 11; c.z = 650;
+    tr_course_process_turn(&c, &runner, &lateral, 1.0f/30.0f);
+    assert(c.tiles[11].turned && c.heading == 4 && c.z == 660 && lateral == 0);
+
+    tr_course_init(&c, 1); tr_reset(&runner); runner.stumble_kill_timer = 10;
+    c.current = 11; c.z = 660; lateral = 0;
+    tr_course_request_turn(&c, &runner, &lateral, 1);
+    assert(runner.stumbling && !c.tiles[11].turned);
+    tr_course_init(&c, 1); tr_reset(&runner);
+    c.current = 11; c.z = 689; runner.forward = 2;
+    tr_course_step(&c, &runner, 0, 0, 0);
+    assert(runner.dead);
+
+    c = empty_course(); c.current = 2; c.heading = 2;
+    c.tiles[2].x = 120; c.tiles[2].z = 0;
+    c.tiles[2].incoming = c.tiles[2].outgoing = 2; c.tiles[2].obstacle = 1;
+    c.x = 112; c.z = 0; tr_reset(&runner); runner.forward = 2;
+    tr_course_step(&c, &runner, 0, 0, 0);
+    assert(runner.dead); /* horizontal prefab region spans x=-7..-3 */
+    c = empty_course(); c.current = 2; c.tiles[2].terrain = 1;
+    c.z = 80; tr_reset(&runner); runner.forward = 1;
+    tr_course_step(&c, &runner, 0, 0, 0);
+    assert(c.unsupported_terrain && !runner.dead);
+
+    tr_course_init(&c, 1); tr_reset(&runner); runner.stumble_kill_timer = 10;
+    int turns = 0;
+    for (int step = 0; step < 3000; step++) {
+        for (int i = 0; i < c.count; i++) {
+            c.tiles[i].obstacle = c.tiles[i].terrain = 0; c.tiles[i].coin_lane = 2;
+        }
+        TRTile *tile = &c.tiles[c.current];
+        float ahead = (tile->x-c.x)*(tile->incoming == 2 ? 1 : tile->incoming == 4 ? -1 : 0) +
+            (tile->z-c.z)*(tile->incoming == 1 ? 1 : tile->incoming == 3 ? -1 : 0);
+        if (tile->turn && !tile->turned && ahead >= -10 && ahead <= 10) {
+            lateral = 0; tr_course_request_turn(&c, &runner, &lateral, tile->turn); turns++;
+        }
+        float previous = runner.forward; runner.forward += 3.0f;
+        tr_course_step(&c, &runner, previous, 0, 0);
+        assert(!runner.dead && !c.unsupported_terrain && c.count <= TR_COURSE_CAPACITY);
+    }
+    assert(turns > 5 && c.generated > 100);
     puts("Opening course checks passed");
     return 0;
 }

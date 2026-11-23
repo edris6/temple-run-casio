@@ -21,14 +21,15 @@ typedef struct {
     const uint16_t *texture; /* 128x128 RGB565, optional */
 } TRMesh;
 
+typedef struct {
+    const TRMesh *path[2], *corner[4], *jump[2], *slide[2], *trip[2];
+    const TRMesh *coin, *player;
+} TRAssets;
+
 /* Path and player are the exported Object81-Pivot and player meshes. */
 void tr_render_frame(TRFramebuffer *fb, const TRMesh *path, const TRMesh *player,
     float forward, float height, float lateral);
-void tr_render_opening(TRFramebuffer *fb, const TRCourse *course, const TRMesh *path,
-    const TRMesh *player, const TRMesh *left_corner, const TRMesh *right_corner,
-    float forward, float height, float lateral);
-void tr_render_course(TRFramebuffer *fb, const TRCourse *course, const TRMesh *jump,
-    const TRMesh *slide, const TRMesh *trip, const TRMesh *coin,
-    float forward, float lateral);
+void tr_render_world(TRFramebuffer *fb, const TRCourse *course, const TRAssets *assets,
+    float height);
 
 #endif

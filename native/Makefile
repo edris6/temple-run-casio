@@ -25,7 +25,7 @@ build/test_session: src/session.c src/session.h src/course.c src/course.h src/re
 	$(CC) $(CFLAGS) -Isrc src/session.c src/course.c src/recovered.c tests/test_session.c -lm -o $@
 
 # Generate build/player.h and build/path.h from the user's Unity checkout first.
-build/preview: src/preview.c src/renderer.c src/renderer.h src/course.c src/course.h src/recovered.c src/recovered.h build/player.h build/path.h build/player_tex.h build/path_tex.h build/jump.h build/slide.h build/trip.h build/coin.h build/tree_tex.h
+build/preview: src/preview.c src/renderer.c src/renderer.h src/course.c src/course.h src/recovered.c src/recovered.h build/player.h build/path.h build/player_tex.h build/path_tex.h build/jump.h build/slide.h build/trip.h build/coin.h build/tree_tex.h build/left_corner.h build/right_corner.h build/corner_c.h build/corner_d.h build/path_h.h build/jump_h.h build/slide_h.h build/trip_h.h
 	$(CC) $(CFLAGS) -Isrc -Ibuild src/preview.c src/renderer.c src/course.c src/recovered.c -lm -o $@
 
 clean:

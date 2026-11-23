@@ -9,6 +9,14 @@
 #include "trip.h"
 #include "coin.h"
 #include "tree_tex.h"
+#include "left_corner.h"
+#include "right_corner.h"
+#include "corner_c.h"
+#include "corner_d.h"
+#include "path_h.h"
+#include "jump_h.h"
+#include "slide_h.h"
+#include "trip_h.h"
 #include <stdio.h>
 
 static TRFramebuffer fb;
@@ -21,10 +29,20 @@ int main(int argc, char **argv)
     TRMesh slide = {slide_vertices,slide_indices,SLIDE_VERTEX_COUNT,SLIDE_INDEX_COUNT,slide_uvs,tree_texture};
     TRMesh trip = {trip_vertices,trip_indices,TRIP_VERTEX_COUNT,TRIP_INDEX_COUNT,trip_uvs,tree_texture};
     TRMesh coin = {coin_vertices,coin_indices,COIN_VERTEX_COUNT,COIN_INDEX_COUNT,coin_uvs,path_texture};
+    TRMesh corners[] = {
+        {left_corner_vertices,left_corner_indices,LEFT_CORNER_VERTEX_COUNT,LEFT_CORNER_INDEX_COUNT,left_corner_uvs,path_texture},
+        {right_corner_vertices,right_corner_indices,RIGHT_CORNER_VERTEX_COUNT,RIGHT_CORNER_INDEX_COUNT,right_corner_uvs,path_texture},
+        {corner_c_vertices,corner_c_indices,CORNER_C_VERTEX_COUNT,CORNER_C_INDEX_COUNT,corner_c_uvs,path_texture},
+        {corner_d_vertices,corner_d_indices,CORNER_D_VERTEX_COUNT,CORNER_D_INDEX_COUNT,corner_d_uvs,path_texture}};
+    TRMesh path_horizontal = {path_h_vertices,path_h_indices,PATH_H_VERTEX_COUNT,PATH_H_INDEX_COUNT,path_h_uvs,path_texture};
+    TRMesh jh = {jump_h_vertices,jump_h_indices,JUMP_H_VERTEX_COUNT,JUMP_H_INDEX_COUNT,jump_h_uvs,tree_texture};
+    TRMesh sh = {slide_h_vertices,slide_h_indices,SLIDE_H_VERTEX_COUNT,SLIDE_H_INDEX_COUNT,slide_h_uvs,tree_texture};
+    TRMesh th = {trip_h_vertices,trip_h_indices,TRIP_H_VERTEX_COUNT,TRIP_H_INDEX_COUNT,trip_h_uvs,tree_texture};
+    TRAssets assets = {{&path,&path_horizontal}, {&corners[0],&corners[1],&corners[2],&corners[3]},
+        {&jump,&jh}, {&slide,&sh}, {&trip,&th}, &coin, &player};
     TRCourse course;
     tr_course_init(&course, 1);
-    tr_render_frame(&fb, &path, &player, 0, 0, 0);
-    tr_render_course(&fb, &course, &jump, &slide, &trip, &coin, 0, 0);
+    tr_render_world(&fb, &course, &assets, 0);
     FILE *f = fopen(argv[1], "wb");
     if (!f) { perror(argv[1]); return 1; }
     fprintf(f, "P6\n%d %d\n255\n", TR_WIDTH, TR_HEIGHT);

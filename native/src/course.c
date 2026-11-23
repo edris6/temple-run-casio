@@ -1,23 +1,20 @@
-/* Opening straight of TempleRunFlow.Track.cs at 65964ad. The source
- * reconstruction's scheduler is authored glue, not original native code. */
+/* Course scheduler and turn rules translated from the Unity reconstruction,
+ * TempleRunFlow.Track.cs and PathElement.cs, commit 65964ad. Its scheduler is
+ * authored glue; the original game's generator has not been recovered. */
 #include "course.h"
 #include <limits.h>
 #include <math.h>
 #include <string.h>
 
-/* The seeded System.Random algorithm used by Unity's managed runtime.
- * Algorithm reference: Microsoft .NET reference source, MIT license:
- * https://github.com/microsoft/referencesource/blob/main/mscorlib/system/random.cs */
-typedef struct { int values[56], next, nextp; } Random;
-
-/* C# uses unchecked 32-bit integer arithmetic here. */
+/* Seeded System.Random: Microsoft .NET reference source, MIT license;
+ * see native/THIRD_PARTY_NOTICES.md. */
 static int wrap_sub(int a, int b)
 {
     uint32_t value = (uint32_t)a - (uint32_t)b;
     return value <= INT32_MAX ? (int)value : -1 - (int)(UINT32_MAX - value);
 }
 
-static void random_init(Random *r, int seed)
+static void random_init(TRRandom *r, int seed)
 {
     memset(r, 0, sizeof(*r));
     int subtraction = seed == INT_MIN ? INT_MAX : seed < 0 ? -seed : seed;
@@ -38,7 +35,7 @@ static void random_init(Random *r, int seed)
     r->next = 0; r->nextp = 21;
 }
 
-static int next(Random *r, int min, int max)
+static int next(TRRandom *r, int min, int max)
 {
     if (++r->next >= 56) r->next = 1;
     if (++r->nextp >= 56) r->nextp = 1;
@@ -49,78 +46,170 @@ static int next(Random *r, int min, int max)
     return min + (int)((double)value * (1.0 / INT_MAX) * (max-min));
 }
 
-void tr_course_init(TRCourse *course, int seed)
+static int dx(int direction) { return direction == 2 ? 1 : direction == 4 ? -1 : 0; }
+static int dz(int direction) { return direction == 1 ? 1 : direction == 3 ? -1 : 0; }
+static int turn_heading(int direction, int sign)
+{ return sign < 0 ? (direction + 2) % 4 + 1 : direction % 4 + 1; }
+
+static void append_tile(TRCourse *c, float distance)
 {
-    memset(course, 0, sizeof(*course));
-    Random random;
-    random_init(&random, seed);
-    int since_obstacle = 0, until_turn = 12;
-    for (int i = 0; i < TR_OPENING_TILES; i++) {
-        TRTile *tile = &course->tiles[i];
-        tile->index = i;
-        tile->coin_lane = 2;
-        if (--until_turn <= 0) {
-            course->corner_direction = next(&random, 0, 2) == 0 ? -1 : 1;
-            /* Host also draws the next turn interval at generation time. */
-            until_turn = next(&random, 10, 13);
-            continue;
+    TRTile *previous = c->count ? &c->tiles[c->count-1] : NULL;
+    TRTile *tile = &c->tiles[c->count++];
+    memset(tile, 0, sizeof(*tile));
+    tile->index = c->generated++;
+    tile->coin_lane = 2;
+    tile->incoming = previous ? previous->outgoing : 1;
+    tile->outgoing = tile->incoming;
+    if (previous) {
+        tile->x = previous->x + 60 * dx(previous->outgoing);
+        tile->z = previous->z + 60 * dz(previous->outgoing);
+    }
+    if (--c->until_turn <= 0) {
+        tile->turn = next(&c->random, 0, 2) == 0 ? -1 : 1;
+        tile->outgoing = turn_heading(tile->incoming, tile->turn);
+        c->until_turn = next(&c->random, distance < 250 ? 10 : distance < 1000 ? 6 : 3, 13);
+    } else {
+        c->since_obstacle++;
+        if (tile->index > 3 && c->since_obstacle >= (distance < 250 ? 6 : 4) &&
+            next(&c->random, 0, 100) < 60) {
+            c->since_obstacle = 0;
+            int hazard = next(&c->random, 0, distance < 250 ? 2 : distance < 500 ? 4 : 5);
+            if (hazard == 0) tile->obstacle = 1;
+            else if (hazard == 1) tile->obstacle = 3;
+            else if (hazard == 2) tile->terrain = 1;
+            else if (hazard == 3) tile->terrain = 2;
+            else tile->obstacle = 2;
         }
-        since_obstacle++;
-        if (i > 3 && since_obstacle >= 6 && next(&random, 0, 100) < 60) {
-            since_obstacle = 0;
-            tile->obstacle = next(&random, 0, 2) == 0 ? 1 : 3;
-        }
-        if (i > 0 && i % 6 < 4 && tile->obstacle == 0)
-            tile->coin_lane = next(&random, -1, 2);
+        if (tile->index > 0 && tile->index % 6 < 4 && tile->obstacle == 0)
+            tile->coin_lane = next(&c->random, -1, 2);
+        /* Default profile has no power-up upgrades. The probability draw is
+         * still consumed by the reference host, even when none are available. */
+        if (tile->obstacle == 0 && tile->index > 15 && c->elapsed >= 15.0f)
+            (void)next(&c->random, 0, 100);
     }
 }
 
-/* Distance from a point to the recovered player AABB in world coordinates. */
+void tr_course_init(TRCourse *c, int seed)
+{
+    memset(c, 0, sizeof(*c));
+    random_init(&c->random, seed);
+    c->until_turn = 12;
+    c->heading = 1;
+    c->view_z = 1;
+    c->z = -15.0f;
+    for (int i = 0; i < TR_COURSE_LOOKAHEAD; i++) append_tile(c, 0);
+}
+
+void tr_course_request_turn(TRCourse *c, TRRunner *p, float *lateral, int sign)
+{
+    if (p->dead || c->unsupported_terrain || !sign) return;
+    sign = sign < 0 ? -1 : 1;
+    TRTile *tile = &c->tiles[c->current];
+    float ahead = (tile->x-c->x)*dx(tile->incoming) + (tile->z-c->z)*dz(tile->incoming);
+    if (tile->turn && !tile->turned && fabsf(ahead) <= 12.0f && sign == tile->turn) {
+        c->x = (float)tile->x; c->z = (float)tile->z;
+        c->heading = tile->outgoing;
+        *lateral = 0;
+        tile->turned = true;
+        c->buffered_turn = 0;
+        return;
+    }
+    if (c->current + 1 < c->count) {
+        TRTile *following = &c->tiles[c->current+1];
+        float next_ahead = (following->x-c->x)*dx(c->heading) + (following->z-c->z)*dz(c->heading);
+        if ((following->turn && next_ahead > 0 && next_ahead <= p->speed*0.4f+15.0f) ||
+            (tile->turn && !tile->turned && ahead > 0)) {
+            c->buffered_turn = sign;
+            c->turn_buffer_time = 0.5f;
+            return;
+        }
+    }
+    tr_stumble(p);
+}
+
+void tr_course_process_turn(TRCourse *c, TRRunner *p, float *lateral, float dt)
+{
+    if (!c->buffered_turn || p->dead) return;
+    TRTile *tile = &c->tiles[c->current];
+    c->turn_buffer_time -= dt;
+    float ahead = (tile->x-c->x)*dx(tile->incoming) + (tile->z-c->z)*dz(tile->incoming);
+    if (tile->turn && !tile->turned && fabsf(ahead) <= 10.0f) {
+        int sign = c->buffered_turn;
+        c->buffered_turn = 0;
+        tr_course_request_turn(c, p, lateral, sign);
+    } else if (c->turn_buffer_time <= 0) c->buffered_turn = 0;
+}
+
 static float axis_distance(float p, float low, float high)
 { return p < low ? low-p : p > high ? p-high : 0; }
 
-void tr_course_step(TRCourse *course, TRRunner *runner, float previous_forward,
+void tr_course_step(TRCourse *c, TRRunner *p, float previous_forward,
     float previous_lateral, float lateral)
 {
-    if (runner->dead || course->corner_reached) return;
-    /* The renderer places the runner 20 units in front of its camera anchor. */
-    float before = previous_forward + 20.0f, current = runner->forward + 20.0f;
-    for (int i = 0; i < TR_OPENING_TILES - 1 && !runner->dead; i++) {
-        TRTile *tile = &course->tiles[i];
-        float center = 60.0f * i;
-        if (current < center-35.0f || before > center+35.0f) continue;
+    if (p->dead || c->unsupported_terrain) return;
+    float old_x = c->x, old_z = c->z;
+    float displacement = p->forward - previous_forward, side = lateral - previous_lateral;
+    c->x += displacement * dx(c->heading) + side * dz(c->heading);
+    c->z += displacement * dz(c->heading) - side * dx(c->heading);
+    c->elapsed += 1.0f/30.0f;
+    int first = c->current > 0 ? c->current-1 : 0;
+    int last = c->current+3 < c->count ? c->current+3 : c->count;
+    for (int i = first; i < last && !p->dead; i++) {
+        TRTile *tile = &c->tiles[i];
+        if (fabsf(c->x-tile->x) > 40 || fabsf(c->z-tile->z) > 40) continue;
+        if (tile->terrain) { c->unsupported_terrain = true; break; }
         if (tile->obstacle && !tile->hit) {
-            TRVec2 points[4];
-            float left = -10.0f;
-            float right = tile->obstacle == 3 ? 5.0f : 10.0f;
-            float near = tile->obstacle == 1 ? 3.0f : tile->obstacle == 2 ? -3.0f : -1.0f;
-            float far = tile->obstacle == 1 ? 7.0f : tile->obstacle == 2 ? 3.0f : 1.0f;
-            points[0] = (TRVec2){left,near}; points[1] = (TRVec2){right,near};
-            points[2] = (TRVec2){right,far}; points[3] = (TRVec2){left,far};
-            TRVec2 p0 = {previous_lateral, before-center}, p1 = {lateral, current-center};
+            int vertical = tile->incoming == 1 || tile->incoming == 3;
+            float l, r, n, f;
+            if (vertical) {
+                l = -10; r = tile->obstacle == 3 ? 5 : 10;
+                n = tile->obstacle == 1 ? 3 : tile->obstacle == 2 ? -3 : -1;
+                f = tile->obstacle == 1 ? 7 : tile->obstacle == 2 ? 3 : 1;
+            } else {
+                l = tile->obstacle == 1 ? -7 : tile->obstacle == 2 ? -3 : -1;
+                r = tile->obstacle == 1 ? -3 : tile->obstacle == 2 ? 3 : 1;
+                n = tile->obstacle == 3 ? -5 : -10; f = 10;
+            }
+            TRVec2 points[] = {{l,n},{r,n},{r,f},{l,f}};
+            TRVec2 p0 = {old_x-tile->x,old_z-tile->z}, p1 = {c->x-tile->x,c->z-tile->z};
             bool jump = tile->obstacle != 2, slide = tile->obstacle == 2;
-            float height = tile->obstacle == 1 ? 6.0f : tile->obstacle == 2 ? 8.0f : 1.0f;
-            if (tr_enters_obstacle(points, 4, p0, p1, jump, slide,
-                                   runner->height, height, runner->sliding)) {
+            float height = tile->obstacle == 1 ? 6 : tile->obstacle == 2 ? 8 : 1;
+            if (tr_enters_obstacle(points, 4, p0, p1, jump, slide, p->height, height, p->sliding)) {
                 tile->hit = true;
-                if (tile->obstacle == 3) tr_stumble(runner);
-                else runner->dead = true;
+                if (tile->obstacle == 3) tr_stumble(p); else p->dead = true;
             }
         }
-        if (tile->coin_lane != 2 && !runner->dead) for (int j = 0; j < 6; j++) {
+        if (tile->coin_lane != 2 && !p->dead) for (int j = 0; j < 6; j++) {
             if (tile->coins_collected & (1u << j)) continue;
-            float coin_x = 6.0f * tile->coin_lane;
-            float coin_z = center - 24.0f + 9.0f*j;
-            float dx = axis_distance(coin_x, lateral-1.7469f, lateral+1.7469f);
-            float dy = axis_distance(3.0f, runner->height-0.16485f, runner->height+9.58665f);
-            float dz = axis_distance(coin_z, current-1.7469f, current+1.7469f);
-            if (dx*dx + dy*dy + dz*dz <= 2.25f*2.25f) {
+            float along = -24.0f + 9.0f*j, lane = 6.0f * tile->coin_lane;
+            float coin_x = tile->x + along*dx(tile->incoming) + lane*dz(tile->incoming);
+            float coin_z = tile->z + along*dz(tile->incoming) - lane*dx(tile->incoming);
+            float x = axis_distance(coin_x, c->x-1.7469f, c->x+1.7469f);
+            float y = axis_distance(3, p->height-0.16485f, p->height+9.58665f);
+            float z = axis_distance(coin_z, c->z-1.7469f, c->z+1.7469f);
+            if (x*x + y*y + z*z <= 2.25f*2.25f) {
                 tile->coins_collected |= 1u << j;
-                tr_add_coins(runner, 1);
+                tr_add_coins(p, 1);
             }
         }
     }
-    /* Stop at the first corner until connected corner geometry is ported. */
-    if (current >= 60.0f * (TR_OPENING_TILES - 1) - 12.0f)
-        course->corner_reached = true;
+    TRTile *current = &c->tiles[c->current];
+    float past = (c->x-current->x)*dx(current->incoming) + (c->z-current->z)*dz(current->incoming);
+    /* The reference falls off the unturned path; falling animation and exact
+     * ground regions are still missing, so end the run at the tile edge. */
+    if (current->turn && !current->turned && past > 30.0f) p->dead = true;
+    while (c->current + 1 < c->count) {
+        current = &c->tiles[c->current];
+        if (current->turn && !current->turned) break;
+        float beyond = (c->x-current->x)*dx(current->outgoing) + (c->z-current->z)*dz(current->outgoing);
+        if (beyond <= 30.0f) break;
+        c->current++;
+    }
+    if (c->current > 8) {
+        int remove = c->current - 4;
+        memmove(c->tiles, c->tiles+remove, (c->count-remove)*sizeof(c->tiles[0]));
+        c->count -= remove; c->current -= remove;
+    }
+    while (c->count-c->current < TR_COURSE_LOOKAHEAD && c->count < TR_COURSE_CAPACITY)
+        append_tile(c, p->distance);
 }

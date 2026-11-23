@@ -8,7 +8,12 @@ static TRSession approaching_jump_tree(void)
     TRSession s;
     tr_session_reset(&s, 1);
     memset(&s.course, 0, sizeof(s.course));
-    for (int i = 0; i < TR_OPENING_TILES; i++) s.course.tiles[i].coin_lane = 2;
+    s.course.count = TR_OPENING_TILES; s.course.heading = 1; s.course.z = 114.9f;
+    for (int i = 0; i < TR_OPENING_TILES; i++) {
+        s.course.tiles[i].z = i*60; s.course.tiles[i].index = i;
+        s.course.tiles[i].incoming = s.course.tiles[i].outgoing = 1;
+        s.course.tiles[i].coin_lane = 2;
+    }
     s.course.tiles[2].obstacle = 1;
     s.runner.forward = 94.9f; /* world z=114.9, tree begins at z=123 */
     return s;
@@ -35,6 +40,15 @@ int main(void)
     s.runner.dead = true;
     tr_session_advance(&s, (TRInput){.restart=true}, 30, 1);
     assert(!s.runner.dead && s.runner.forward == -35 && s.runner.coins == 0);
+
+    tr_session_reset(&s, 1);
+    s.course.current = 11; s.course.z = 650;
+    s.runner.stumble_kill_timer = 10;
+    tr_session_advance(&s, (TRInput){.turn=-1}, 1, 1);
+    assert(s.course.tiles[s.course.current].index == 11 &&
+           s.course.tiles[s.course.current].turned && s.course.heading == 4);
+    assert(s.course.x < 0 && s.course.z == 660);
+    assert(s.course.view_x < 0 && s.course.view_z > 0);
     puts("Input and session checks passed");
     return 0;
 }

@@ -13,6 +13,7 @@ typedef struct {
 typedef struct {
     bool jump, slide, restart, toggle_pause;
     int tilt; /* -1 left, 0 neutral, +1 right */
+    int turn; /* -1 left, 0 none, +1 right */
 } TRInput;
 
 void tr_session_reset(TRSession *session, int seed);

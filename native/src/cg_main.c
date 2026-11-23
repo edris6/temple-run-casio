@@ -19,6 +19,12 @@
 #include "tree_tex.h"
 #include "left_corner.h"
 #include "right_corner.h"
+#include "path_h.h"
+#include "corner_c.h"
+#include "corner_d.h"
+#include "jump_h.h"
+#include "slide_h.h"
+#include "trip_h.h"
 
 static TRFramebuffer frame;
 static volatile int ticks;
@@ -36,6 +42,15 @@ int main(void)
     TRMesh coin_mesh = {coin_vertices,coin_indices,COIN_VERTEX_COUNT,COIN_INDEX_COUNT,coin_uvs,path_texture};
     TRMesh corner_left = {left_corner_vertices,left_corner_indices,LEFT_CORNER_VERTEX_COUNT,LEFT_CORNER_INDEX_COUNT,left_corner_uvs,path_texture};
     TRMesh corner_right = {right_corner_vertices,right_corner_indices,RIGHT_CORNER_VERTEX_COUNT,RIGHT_CORNER_INDEX_COUNT,right_corner_uvs,path_texture};
+    TRMesh path_horizontal = {path_h_vertices,path_h_indices,PATH_H_VERTEX_COUNT,PATH_H_INDEX_COUNT,path_h_uvs,path_texture};
+    TRMesh corner_c_mesh = {corner_c_vertices,corner_c_indices,CORNER_C_VERTEX_COUNT,CORNER_C_INDEX_COUNT,corner_c_uvs,path_texture};
+    TRMesh corner_d_mesh = {corner_d_vertices,corner_d_indices,CORNER_D_VERTEX_COUNT,CORNER_D_INDEX_COUNT,corner_d_uvs,path_texture};
+    TRMesh jump_horizontal = {jump_h_vertices,jump_h_indices,JUMP_H_VERTEX_COUNT,JUMP_H_INDEX_COUNT,jump_h_uvs,tree_texture};
+    TRMesh slide_horizontal = {slide_h_vertices,slide_h_indices,SLIDE_H_VERTEX_COUNT,SLIDE_H_INDEX_COUNT,slide_h_uvs,tree_texture};
+    TRMesh trip_horizontal = {trip_h_vertices,trip_h_indices,TRIP_H_VERTEX_COUNT,TRIP_H_INDEX_COUNT,trip_h_uvs,tree_texture};
+    TRAssets assets = {{&path,&path_horizontal}, {&corner_left,&corner_right,&corner_c_mesh,&corner_d_mesh},
+        {&jump_mesh,&jump_horizontal}, {&slide_mesh,&slide_horizontal},
+        {&trip_mesh,&trip_horizontal}, &coin_mesh, &player};
     TRSession session;
     tr_session_reset(&session, (int)rtc_ticks());
     int timer = timer_configure(TIMER_ANY, 33333, GINT_CALL(tick));
@@ -51,6 +66,8 @@ int main(void)
             if (ev.key == KEY_EXIT) running = 0;
             if (ev.key == KEY_UP) input.jump = true;
             if (ev.key == KEY_DOWN) input.slide = true;
+            if (ev.key == KEY_LEFT) input.turn = -1;
+            if (ev.key == KEY_RIGHT) input.turn = 1;
             if (ev.key == KEY_EXE) input.restart = true;
             if (ev.key == KEY_F1) input.toggle_pause = !input.toggle_pause;
         }
@@ -59,10 +76,7 @@ int main(void)
         ticks = 0;
         input.tilt = keydown(KEY_6) - keydown(KEY_4);
         tr_session_advance(&session, input, elapsed, (int)rtc_ticks());
-        tr_render_opening(&frame, &session.course, &path, &player, &corner_left, &corner_right,
-                          session.runner.forward, session.runner.height, session.lateral);
-        tr_render_course(&frame, &session.course, &jump_mesh, &slide_mesh, &trip_mesh, &coin_mesh,
-                         session.runner.forward, session.lateral);
+        tr_render_world(&frame, &session.course, &assets, session.runner.height);
         dclear(C_BLACK);
         /* gint exposes a 396x224 RGB565 framebuffer, with no extra row stride. */
         for (int y = 0; y < TR_HEIGHT; y++) for (int x = 0; x < TR_WIDTH; x++) {
@@ -75,7 +89,7 @@ int main(void)
         dprint(8, 22, C_WHITE, "COINS %d", session.runner.coins);
         if (session.paused) dtext(150, 42, C_WHITE, "PAUSED - F1: RESUME");
         if (session.runner.dead) dtext(100, 42, C_WHITE, "GAME OVER - EXE: RESTART");
-        if (session.course.corner_reached) dtext(55, 42, C_WHITE, "CORNER NOT PORTED - EXE: RESTART");
+        if (session.course.unsupported_terrain) dtext(45, 42, C_WHITE, "GAP/NARROW NOT PORTED - EXE: RESTART");
         dupdate();
     }
     timer_stop(timer);
