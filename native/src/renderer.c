@@ -6,7 +6,7 @@
 typedef struct { float x, y, z; } Vec3;
 typedef struct { int x, y; int32_t inv_z, u, v; } Projected;
 typedef struct { Vec3 p; float u, v; } ClipVertex;
-typedef struct { int path; float forward, height, lateral; } Transform;
+typedef struct { int kind; float forward, height, lateral, side; } Transform;
 
 static int clampi(int x, int a, int b) { return x < a ? a : x > b ? b : x; }
 static int edge(Projected a, Projected b, int x, int y)
@@ -15,16 +15,24 @@ static int edge(Projected a, Projected b, int x, int y)
 static Vec3 world_vertex(const float *v, Transform t)
 {
     Vec3 p;
-    if (t.path) {
+    if ((t.kind >= 1 && t.kind <= 4) || t.kind == 6 || t.kind == 7) {
         /* Object81-Pivot's raw model coordinates include a large local pivot.
          * The corresponding prefab cancels it before rotating the mesh. */
-        p.x = -(v[0] + 559.9522f) - t.lateral;
+        float origin_x = t.kind == 1 ? 559.9522f : t.kind == 6 ? 629.9522f :
+            t.kind == 7 ? 689.9522f : t.kind == 3 ? 1349.952f : 1359.9521f;
+        float origin_z = t.kind == 1 ? -1335.3497f : t.kind >= 6 ? -1275.3496f : t.kind == 2 ? -675.3496f :
+            t.kind == 3 ? -575.3496f : -415.3496f;
+        p.x = -(v[0] + origin_x) - t.lateral;
         p.y = v[2] + 30.0f - 15.0f - 9.0f;
-        p.z = v[1] - 1335.3497f + t.forward + 10.0f;
-    } else {
+        p.z = v[1] + origin_z + t.forward + 10.0f;
+    } else if (t.kind == 0) {
         p.x = v[0];
         p.y = v[1] + 5.4f + t.height * 0.3f - 9.0f;
         p.z = v[2] + 20.0f + 10.0f;
+    } else { /* coin prefab is not rotated with the wall meshes */
+        p.x = v[0] + t.side - t.lateral;
+        p.y = v[1] + 3.0f - 9.0f;
+        p.z = v[2] + t.forward + 10.0f;
     }
     return p;
 }
@@ -140,7 +148,8 @@ static void mesh(TRFramebuffer *fb, const TRMesh *m, Transform t, uint16_t base)
     }
 }
 
-void tr_render_frame(TRFramebuffer *fb, const TRMesh *path, const TRMesh *player,
+static void render_frame(TRFramebuffer *fb, const TRCourse *course, const TRMesh *path,
+    const TRMesh *player, const TRMesh *left_corner, const TRMesh *right_corner,
     float forward, float height, float lateral)
 {
     for (int y = 0; y < TR_HEIGHT; y++) for (int x = 0; x < TR_WIDTH; x++) {
@@ -149,12 +158,58 @@ void tr_render_frame(TRFramebuffer *fb, const TRMesh *path, const TRMesh *player
         fb->depth[i] = 0;
     }
     float offset = fmodf(forward, 60.0f);
+    int base_tile = (int)(forward / 60.0f);
     for (int i = -1; i < 5; i++) {
         float center = i * 60.0f - offset;
         if (center + 40.0f < 3.0f || center - 20.0f > 250.0f) continue;
-        Transform t = {1, center, 0, lateral};
-        mesh(fb, path, t, 0x7be9);
+        int tile = base_tile + i;
+        if (course && tile > TR_OPENING_TILES - 1) continue;
+        if (course && tile == TR_OPENING_TILES - 1) {
+            int left = course->corner_direction < 0;
+            Transform t = {left ? 6 : 7, center, 0, lateral, 0};
+            mesh(fb, left ? left_corner : right_corner, t, 0x7be9);
+        } else {
+            Transform t = {1, center, 0, lateral, 0};
+            mesh(fb, path, t, 0x7be9);
+        }
     }
-    Transform runner = {0, 0, height, lateral};
+    Transform runner = {0, 0, height, lateral, 0};
     mesh(fb, player, runner, 0x9a63);
+}
+
+void tr_render_frame(TRFramebuffer *fb, const TRMesh *path, const TRMesh *player,
+    float forward, float height, float lateral)
+{
+    render_frame(fb, NULL, path, player, NULL, NULL, forward, height, lateral);
+}
+
+void tr_render_opening(TRFramebuffer *fb, const TRCourse *course, const TRMesh *path,
+    const TRMesh *player, const TRMesh *left_corner, const TRMesh *right_corner,
+    float forward, float height, float lateral)
+{
+    render_frame(fb, course, path, player, left_corner, right_corner, forward, height, lateral);
+}
+
+void tr_render_course(TRFramebuffer *fb, const TRCourse *course, const TRMesh *jump,
+    const TRMesh *slide, const TRMesh *trip, const TRMesh *coin,
+    float forward, float lateral)
+{
+    for (int i = 0; i < TR_OPENING_TILES - 1; i++) {
+        const TRTile *tile = &course->tiles[i];
+        float center = i * 60.0f - forward;
+        if (center < -30.0f || center > 260.0f) continue;
+        if (tile->obstacle) {
+            int kind = tile->obstacle == 1 ? 2 : tile->obstacle == 2 ? 3 : 4;
+            const TRMesh *obstacle = tile->obstacle == 1 ? jump : tile->obstacle == 2 ? slide : trip;
+            Transform t = {kind,center,0,lateral,0};
+            mesh(fb, obstacle, t, 0x7be9);
+        }
+        if (tile->coin_lane != 2) for (int j = 0; j < 6; j++) {
+            if (tile->coins_collected & (1u << j)) continue;
+            float position = center - 24.0f + j * 9.0f;
+            if (position < -10.0f || position > 220.0f) continue;
+            Transform t = {5,position,0,lateral,6.0f * tile->coin_lane};
+            mesh(fb, coin, t, 0xfc00);
+        }
+    }
 }

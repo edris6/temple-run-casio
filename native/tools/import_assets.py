@@ -10,8 +10,15 @@ import unity_texture
 ASSETS = (
     ("Assets/Mesh/player.asset", "00a87548036507242bec37aca6c00243", "player", "mesh"),
     ("Assets/Mesh/Object81-Pivot.asset", "dafb6161b16610c4bbafceed09ce5209", "path", "mesh"),
+    ("Assets/Mesh/Object79-Pivot.asset", "7432c34d46d566548840af1598290327", "left_corner", "mesh"),
+    ("Assets/Mesh/Object77-Pivot.asset", "5fae00a8ce7f988439fce322ba3cb4e7", "right_corner", "mesh"),
+    ("Assets/Mesh/Object97-Pivot.asset", "5d3b65e3a16702a48b42d5e1554f4c1f", "jump", "mesh"),
+    ("Assets/Mesh/Object102-Pivot.asset", "a7f4e1549896a8e46975806f078aa715", "slide", "mesh"),
+    ("Assets/Mesh/Object104-Pivot.asset", "32ebffaaa06a73844b6f42a0465ded38", "trip", "mesh"),
+    ("Assets/Mesh/Box01.asset", "5f5788a330b828e4ba8472b9598f0c47", "coin", "mesh"),
     ("Assets/Texture2D/playerTexture.png", "94976c8f5714a6b40b7eee3513f4f457", "player", "texture"),
     ("Assets/Texture2D/wallTexture.png", "1baec2f1eac5a674f9dc3c0f43794339", "path", "texture"),
+    ("Assets/Texture2D/treeTexture.png", "ff584f033757e13448d5f0635d662995", "tree", "texture"),
 )
 
 

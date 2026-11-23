@@ -41,6 +41,34 @@ int main(void)
     for (int i = 0; i < TR_WIDTH * TR_HEIGHT; i++)
         if (a.pixels[i] != b.pixels[i]) changed++;
     assert(changed > 0);
+    TRCourse course;
+    memset(&course, 0, sizeof(course));
+    for (int i = 0; i < TR_OPENING_TILES; i++) course.tiles[i].coin_lane = 2;
+    course.tiles[0].coin_lane = 0;
+    tr_render_frame(&b, NULL, NULL, -35, 0, 0);
+    tr_render_course(&b, &course, NULL, NULL, NULL, &player, -35, 0);
+    changed = 0;
+    for (int i = 0; i < TR_WIDTH * TR_HEIGHT; i++)
+        if (a.pixels[i] != b.pixels[i]) changed++;
+    assert(changed > 0);
+    course.tiles[0].coins_collected = 63;
+    tr_render_frame(&b, NULL, NULL, -35, 0, 0);
+    tr_render_course(&b, &course, NULL, NULL, NULL, &player, -35, 0);
+    assert(memcmp(a.pixels, b.pixels, sizeof(a.pixels)) == 0);
+    const float corner_points[][3] = {
+        {-633.9522f, 1272.3496f, -15}, {-625.9522f, 1272.3496f, -15},
+        {-629.9522f, 1278.3496f, -15}
+    };
+    TRMesh corner = {corner_points,good_indices,3,3,NULL,NULL};
+    course.corner_direction = -1;
+    tr_render_opening(&b, &course, NULL, NULL, &corner, NULL, 600, 0, 0);
+    changed = 0;
+    for (int i = 0; i < TR_WIDTH * TR_HEIGHT; i++)
+        if (a.pixels[i] != b.pixels[i]) changed++;
+    assert(changed > 0);
+    course.corner_direction = 1;
+    tr_render_opening(&b, &course, NULL, NULL, &corner, NULL, 600, 0, 0);
+    assert(memcmp(a.pixels, b.pixels, sizeof(a.pixels)) == 0);
     puts("Mesh renderer checks passed");
     return 0;
 }

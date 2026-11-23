@@ -1,11 +1,11 @@
 # Temple Runner for Casio fx-CG50
 
 The requested native port is under [native/](native/README.md). It currently
-contains translated gameplay routines, Unity mesh/texture converters and a
-native renderer diagnostic. It is **not yet a playable port of
-Temple Run**: the level, original animations, textures, turns, obstacles,
-coins and game flow still need integration. See the native README for exact
-source mappings, build instructions and verification status.
+contains translated gameplay routines, Unity mesh/texture converters, and the
+opening straight course with obstacles and coins. It is **not yet a complete
+port of Temple Run**: the build stops at the first corner, and the original
+animations, remaining course, menus and game flow still need integration. See
+the native README for source mappings, build instructions and verification.
 
 ## Earlier prototypes
 

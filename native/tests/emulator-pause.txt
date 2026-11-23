@@ -1,0 +1,10 @@
+wait 1s
+F1
+wait 1s
+shot /work/build/frozen1.bmp
+wait 2s
+shot /work/build/frozen2.bmp
+F1
+wait 1s
+shot /work/build/resumed.bmp
+EXIT

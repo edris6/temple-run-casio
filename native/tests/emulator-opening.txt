@@ -1,0 +1,6 @@
+# With the emulator clock set to 2026-01-01 00:00, jump the opening tree.
+wait 2.6s
+UP
+wait 5s
+shot /work/build/opening-corner.bmp
+EXIT
