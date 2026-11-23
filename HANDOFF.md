@@ -45,14 +45,14 @@ meshes; generated original assets remain Git-ignored and must stay local.
 - Runner, path, coins, trees and the first corner use meshes/textures imported
   from the reference reconstruction. The runner is still in its bind pose.
 - Jump, slide, tilt via 4/6, coin collection, obstacle death/stumble,
-  pause/resume via F1, and EXE restart are wired. The current build deliberately
-  stops at the first corner: turning and later track generation are not ported.
+  pause/resume via F1, and EXE restart are wired. That checkpoint deliberately
+  stops at the first corner; the subsequent turn implementation is unverified.
 - The locally built diagnostic is `native/TRUN3D.g3a`. It contains derived
   original assets, is ignored by Git, and should remain local. The generated
   headers in `native/build/` and build files in `native/build-cg/` are also
   ignored. The source and tests are tracked.
 
-## Verification completed
+## Earlier checkpoint verification
 
 - `make -C native test` passed with AddressSanitizer and UndefinedBehaviorSanitizer,
   including a regression for a jump pressed during a slow-render frame.
@@ -84,3 +84,8 @@ was `/tmp/temple-emulator`. Neither checkout is part of this project.
 
 The `manawyrm/fxsdk` Docker image was downloaded for the cross-build and may
 still be present in Docker's image cache. No remote push was performed.
+
+After stopping work, no emulator or build processes were found and Docker
+Desktop's daemon was stopped. A root-owned, launchd-managed Docker networking
+helper (`com.docker.vmnetd`) remained running; it was not terminated because
+it is a system service, and its ownership by this task could not be established.

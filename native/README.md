@@ -11,13 +11,15 @@ This directory begins a native C port of the Unity reconstruction at
 It does not run Unity or claim that the incomplete reconstruction is the full
 original game. The target is an fx-CG50 `.g3a` add-in built with fxSDK and gint.
 
-**Current result: the opening straight is playable; the full game is not yet
-ported.** The runner, temple path, coins, jump trees and trip trees use their
+## Earlier verified checkpoint
+
+At commit `ca025d1`, the opening straight was playable in the emulator; the
+full game was not yet ported. The runner, temple path, coins, jump trees and trip trees use their
 exported meshes and downsampled textures. The first corner's original mesh is
 displayed, but turning through it is not implemented yet. Course placement, coin pickup bounds
 and obstacle collision regions come from the reference reconstruction. Up jumps,
 down slides, 4 and 6 change lateral position, F1 pauses, and EXIT quits. After
-death, EXE restarts. The current run stops at the first corner; EXE restarts
+death, EXE restarts. That checkpoint stops at the first corner; EXE restarts
 there too. New runs use the calculator clock as a seed.
 
 The character remains in its bind pose. Connected corners, later course types,
@@ -45,7 +47,8 @@ equivalent to the original binary. `tr_step` currently omits the boost and
 power-up branches, raised-ground transitions, lateral motion in distance
 calculation, animation and other host integrations. The source course
 scheduler was authored for the reconstruction; it is not the recovered
-original generator. Only its first 12 tiles are generated here. The renderer is new code,
+original generator. The latest source extends the scheduler beyond the first
+12 tiles, but its turning needs further verification. The renderer is new code,
 not a Unity engine implementation: it supports position-only triangle meshes,
 affine UV mapping, a reciprocal-depth buffer and near-plane clipping. Original
 lightmaps and full Unity material behavior are not used.
@@ -92,7 +95,7 @@ calculator has been tested. With a cable, Casio add-ins normally go in storage
 memory; back up important data first. Treat this output as a diagnostic build,
 not a release.
 
-For a host-rendered still, after generating the two mesh headers:
+For a host-rendered still, after generating the asset headers:
 
 ```sh
 make build/preview
@@ -114,8 +117,8 @@ emuCasioCalc build; they are not part of `make test`.
 
 1. Apply prefab transform hierarchies, material settings and lightmaps; replace
    bind-pose runner rendering with skeleton and animation playback.
-2. Extend the host track scheduler beyond the opening, and port the relevant
-   `PathElement` turn rules and connected corner meshes.
+2. Verify and fix the in-progress connected course, turn input and camera;
+   then add the remaining ground regions and terrain types.
 3. Add ground gaps, original pause and death panels, and other pickups; verify
    behavior against the reconstruction.
 4. Profile on a calculator, replace expensive software floating point as needed,

@@ -1,11 +1,11 @@
 # Temple Runner for Casio fx-CG50
 
 The requested native port is under [native/](native/README.md). It currently
-contains translated gameplay routines, Unity mesh/texture converters, and the
-opening straight course with obstacles and coins. It is **not yet a complete
-port of Temple Run**: the build stops at the first corner, and the original
-animations, remaining course, menus and game flow still need integration. See
-the native README for source mappings, build instructions and verification.
+contains translated gameplay routines, Unity mesh/texture converters, and a
+partially implemented connected course. It is **not yet a complete or verified
+port of Temple Run**. The earlier tested checkpoint stops at the first corner;
+newer turn code failed its first emulator test and needs further work. See the
+[handoff](HANDOFF.md) and native README for current status and verification.
 
 ## Earlier prototypes
 
@@ -68,18 +68,19 @@ Casio lists a 384 x 216 color display and USB connection for the fx-CG50; its
 Python environment is an adapted MicroPython, with a drawing area of 384 x 192
 pixels. Its documented Python input waits for entry, while the built-in
 Basic-like language has a `Getkey` polling command. The real-time prototype
-uses that command and the text screen. A graphical 3D-style game, corners,
-calibrated pacing and saves remain future work.
+uses that command and the text screen. The native port has a 3D mesh renderer,
+but its turning, pacing and saves remain incomplete or unverified.
 
 ## Safety and provenance
 
 The referenced [Unity reconstruction](https://github.com/LuciusTran/templerun)
-is not checked out here. Its public description and the supplied architecture
-notes were reviewed, but its scripts, dependencies and bundled DLLs have not
-been audited or run. Its safety cannot be established from a README or project
-description. It contains assets described as extracted from the original game,
+was partially checked out into a temporary directory for source and asset
+inspection. Selected gameplay code and assets were examined, but its scripts,
+dependencies and bundled DLLs have not been audited or run. Its safety cannot
+be established from this limited review. It contains assets described as extracted from the original game,
 which should not be copied into this project without appropriate rights. A
 proper source and binary review requires an actual checkout at a pinned commit.
 
 Git tracks this project locally. `git log --oneline` shows saved snapshots;
-`git status` shows uncommitted edits. No remote is configured.
+`git status` shows uncommitted edits and whether local commits have been pushed.
+An `origin` remote is configured.
