@@ -133,27 +133,32 @@ static void triangle(TRFramebuffer *fb, Projected a, Projected b, Projected c,
         v0 = a.v + vx*(left-a.x) + vy*(top-a.y);
     }
     int row0 = edge(a,b,left,top), row1 = edge(b,c,left,top), row2 = edge(c,a,left,top);
+    /* Texture lookup uses the low 32 bits. Depth at covered pixels is bounded
+     * by the projected vertices (plus small gradient-rounding error), so it
+     * also fits in signed 32 bits. Unsigned wrapping keeps off-triangle
+     * stepping defined even when an extrapolated value leaves that range. */
+    uint32_t row_z = (uint32_t)z0, row_u = (uint32_t)u0, row_v = (uint32_t)v0;
     for (int y = top; y <= bottom; y++) {
         int e0 = row0, e1 = row1, e2 = row2;
-        int64_t z = z0, u = u0, v = v0;
+        uint32_t z = row_z, u = row_u, v = row_v;
         for (int x = left; x <= right; x++) {
             if ((area > 0 && e0 >= 0 && e1 >= 0 && e2 >= 0) ||
                 (area < 0 && e0 <= 0 && e1 <= 0 && e2 <= 0)) {
                 int i = y * TR_WIDTH + x;
-                uint16_t depth = (uint16_t)clampi((int)(z / 256), 1, 65535);
+                uint16_t depth = (uint16_t)((z & 0x80000000u) ? 1 :
+                    clampi((int)(z >> 8), 1, 65535));
                 if (depth > fb->depth[i]) {
                     fb->depth[i] = depth;
                     if (texture) {
-                        uint32_t tu = (uint32_t)u, tv = (uint32_t)v;
-                        fb->pixels[i] = texture[((tv >> 16) & 127u) * 128 + ((tu >> 16) & 127u)];
+                        fb->pixels[i] = texture[((v >> 16) & 127u) * 128 + ((u >> 16) & 127u)];
                     } else fb->pixels[i] = color;
                 }
             }
             e0 += b.y-a.y; e1 += c.y-b.y; e2 += a.y-c.y;
-            z += zx; u += ux; v += vx;
+            z += (uint32_t)zx; u += (uint32_t)ux; v += (uint32_t)vx;
         }
         row0 -= b.x-a.x; row1 -= c.x-b.x; row2 -= a.x-c.x;
-        z0 += zy; u0 += uy; v0 += vy;
+        row_z += (uint32_t)zy; row_u += (uint32_t)uy; row_v += (uint32_t)vy;
     }
 }
 
@@ -184,12 +189,27 @@ static FixedVertex fixed_cache[VERTEX_CACHE_CAPACITY];
 static Projected fixed_projected[VERTEX_CACHE_CAPACITY];
 static unsigned char fixed_valid[VERTEX_CACHE_CAPACITY];
 
+/* A depth is reused by many vertices. Cache its reciprocal and correct the
+ * estimate so screen coordinates match integer division exactly. */
+static uint32_t reciprocal_depth[6401];
+
+static int divide_cached(int numerator, int denominator, uint32_t inverse)
+{
+    int quotient = (int)((int64_t)numerator * inverse / 268435456);
+    int remainder = numerator - quotient * denominator;
+    while (remainder >= denominator) { quotient++; remainder -= denominator; }
+    while (remainder <= -denominator) { quotient--; remainder += denominator; }
+    return quotient;
+}
+
 static int fixed_project(FixedVertex p, Projected *out)
 {
     if (p.z < 48 || p.z > 6400) return 0;
-    out->x = clampi(TR_WIDTH/2 + p.x*105/p.z, -2048, 2048);
-    out->y = clampi(43 - p.y*105/p.z, -2048, 2048);
-    out->inv_z = 268435456 / p.z;
+    uint32_t inverse = reciprocal_depth[p.z];
+    if (!inverse) inverse = reciprocal_depth[p.z] = 268435456u / (unsigned)p.z;
+    out->x = clampi(TR_WIDTH/2 + divide_cached(p.x*105, p.z, inverse), -2048, 2048);
+    out->y = clampi(43 - divide_cached(p.y*105, p.z, inverse), -2048, 2048);
+    out->inv_z = (int32_t)inverse;
     out->u = p.u*4096;
     out->v = (2048-p.v)*4096;
     return 1;

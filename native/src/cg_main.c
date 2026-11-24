@@ -30,6 +30,11 @@
 #include "narrow.h"
 #include "narrow_h.h"
 
+/* gint VRAM is 32-byte aligned; each destination pair is 4-byte aligned. */
+typedef uint32_t __attribute__((__may_alias__)) TRPixelPair;
+_Static_assert(DWIDTH % 2 == 0, "VRAM row must align pixel pairs");
+_Static_assert(TR_WIDTH * 2 + 12 == DWIDTH && TR_HEIGHT * 2 + 8 == DHEIGHT,
+    "Scaled framebuffer must overwrite the full display interior");
 static TRFramebuffer frame;
 static volatile int ticks;
 
@@ -64,6 +69,11 @@ int main(void)
     tr_session_reset(&session, (int)rtc_ticks());
     int timer = timer_configure(TIMER_ANY, 33333, GINT_CALL(tick));
     if (timer < 0) return 1;
+    /* dupdate switches VRAMs on CG50. Clear both buffers once; the scaled
+     * frame overwrites the entire interior on every subsequent update. */
+    dclear(C_BLACK);
+    dupdate();
+    dclear(C_BLACK);
     timer_start(timer);
     int running = 1;
     while (running) {
@@ -87,13 +97,16 @@ int main(void)
         if (!input.tilt) input.tilt = keydown(KEY_RIGHT) - keydown(KEY_LEFT);
         tr_session_advance(&session, input, elapsed, (int)rtc_ticks());
         tr_render_world(&frame, &session.course, &assets, session.runner.height);
-        dclear(C_BLACK);
         /* gint exposes a 396x224 RGB565 framebuffer, with no extra row stride. */
-        for (int y = 0; y < TR_HEIGHT; y++) for (int x = 0; x < TR_WIDTH; x++) {
-            uint16_t c = frame.pixels[y * TR_WIDTH + x];
-            int pixel = (y * 2 + 4) * DWIDTH + x * 2 + 6;
-            gint_vram[pixel] = gint_vram[pixel + 1] = c;
-            gint_vram[pixel + DWIDTH] = gint_vram[pixel + DWIDTH + 1] = c;
+        for (int y = 0; y < TR_HEIGHT; y++) {
+            TRPixelPair *row0 = (TRPixelPair *)&gint_vram[(y * 2 + 4) * DWIDTH + 6];
+            TRPixelPair *row1 = row0 + DWIDTH / 2;
+            for (int x = 0; x < TR_WIDTH; x++) {
+                uint32_t color = frame.pixels[y * TR_WIDTH + x];
+                uint32_t pair = color | (color << 16);
+                row0[x] = pair;
+                row1[x] = pair;
+            }
         }
         dprint(8, 6, C_WHITE, "SCORE %ld", (long)session.runner.score);
         dprint(8, 22, C_WHITE, "COINS %d", session.runner.coins);

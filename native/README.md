@@ -109,7 +109,8 @@ the mesh converter against synthetic fixtures. The runner and path converters
 were additionally exercised against the reference checkout, including the
 runner, path, coin and three obstacle meshes. The emulator was also exercised
 through the opening course and one left turn. `tests/emulator-opening.txt`,
-`tests/emulator-pause.txt`, and `tests/emulator-turn.txt` are the manual
+`tests/emulator-pause.txt`, `tests/emulator-turn.txt`, and
+`tests/emulator-restart.txt` are the manual
 emulator scripts, using `/work` for the mounted `native/` directory and a
 fixed emulator clock of `2026-01-01 00:00`. They require a separate
 emuCasioCalc build; they are not part of `make test`.

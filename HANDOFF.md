@@ -5,42 +5,25 @@ Python or Casio BASIC prototypes. The port is incomplete; see
 [native/README.md](native/README.md) for controls, build instructions and source
 provenance.
 
-## Paused optimization investigation
+## Renderer and display optimization
 
-The user asked to stop. No optimization experiment was applied to tracked
-source, and `native/TRUN3D.g3a` is still the previous 192×108 build from commit
-`b421914`. Do not treat the temporary builds as verified replacements.
+The triangle loop now uses 32-bit wrapping accumulators, a 25 KB reciprocal
+cache avoids repeated projection divisions, and the display code initializes
+both gint VRAM buffers once and writes aligned pairs of pixels. Resolution and
+camera are unchanged. The cache increases static RAM use; the linked add-in has
+193,584 bytes of BSS plus other runtime memory.
 
-An isolated emulator copy sampled the opening run's emulated instruction
-addresses. Of samples mapped to code, about 40% landed in triangle rasterization,
-18% in `dupdate`, and about 10% in mesh handling. Division routines accounted
-for additional samples. This is one emulator workload, not a hardware profile.
-The ignored `native/build/profile.txt` and `native/build/symbols.txt` contain
-the raw sample buckets and symbol list; `/tmp/temple-prof` holds the modified
-profiling emulator. Temporary directories may be deleted by the operating system.
+The rasterizer's output matched the previous version across 4,000 generated
+textured triangles, extreme projected triangles, and six host-rendered course
+views. The cached quotient was checked against ordinary division across every
+supported depth, including signed extremes. Paused emulator screenshots matched
+the previous build byte for byte; the turn, pause, resume, death and restart
+scenarios also ran in the emulator.
 
-Experiments in `/tmp` only:
-
-- `/tmp/renderer-32bit.c` uses wrapping 32-bit pixel accumulators instead of
-  64-bit additions in the triangle loop. A randomized host comparison produced
-  the same hash for 200 frames of synthetic triangles, and the short emulator
-  benchmark displayed about 22 frames in two seconds versus about 20 before.
-  This is preliminary; test numeric bounds and additional scenes before use.
-- `/tmp/renderer-depth-exact.c` adds a roughly 25 KB reciprocal-depth cache and
-  corrects the estimated quotient to match integer division. One desktop preview
-  was byte-identical; the short emulator benchmark displayed about 23 frames.
-  Arithmetic limits, memory cost and real-device behavior remain unverified.
-- `/tmp/temple-bench/src/cg_main.c` contains an instrumented experiment that
-  initializes both gint display buffers once and writes pairs of pixels with
-  aligned 32-bit stores. The no-clear stage showed about 24 frames in the same
-  short benchmark; the final paired-store result and pause, restart, borders,
-  and physical DMA behavior were not verified. `gint/display.h` documents the
-  CG50's buffer switching and 32-byte VRAM alignment.
-
-Next, resume by testing each change independently against the tracked build,
-including randomized numerical edge cases, screenshots across turns and gaps,
-pause/restart behavior and repeated timing runs. Keep the 192×108 resolution and
-closer camera requested by the user. No physical-device performance is known.
+With the same fixed-clock emulator setup, an instrumented four-second run
+displayed about 48 frames versus 41 before the optimization. This is a small
+sample from the emulator's timing model, not a physical-device FPS measurement.
+Physical VRAM/DMA behavior and performance still need a calculator test.
 
 ## Current state
 
@@ -62,9 +45,9 @@ closer camera requested by the user. No physical-device performance is known.
   tree and first left turn in the fx-CG50 add-in emulator. An instrumented
   temporary setup confirmed arrow-key sideways movement, a gap jump and a
   fall when the same gap was not jumped.
-- In one instrumented two-second emulator run, the current higher-resolution
-  opening displayed roughly 20 frames, versus roughly 30 at the preceding
-  128×72 setting. This is not a physical-device FPS measurement.
+- In one instrumented four-second emulator run, the optimized higher-resolution
+  opening displayed roughly 48 frames, versus roughly 41 before optimization.
+  This is not a physical-device FPS measurement.
 - Native host checks run with `make -C native test`; Python asset-converter
   checks run with `python3 -m unittest discover -s tests -v`. The C checks were
   also run with AddressSanitizer and UndefinedBehaviorSanitizer.

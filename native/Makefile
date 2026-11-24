@@ -2,9 +2,10 @@ CC ?= cc
 CFLAGS ?= -std=c11 -Wall -Wextra -Werror -O2
 
 .PHONY: test clean
-test: build/test_recovered build/test_renderer build/test_course build/test_session
+test: build/test_recovered build/test_renderer build/test_raster build/test_course build/test_session
 	./build/test_recovered
 	./build/test_renderer
+	./build/test_raster
 	./build/test_course
 	./build/test_session
 
@@ -15,6 +16,10 @@ build/test_recovered: src/recovered.c src/recovered.h tests/test_recovered.c
 build/test_renderer: src/renderer.c src/renderer.h tests/test_renderer.c
 	mkdir -p build
 	$(CC) $(CFLAGS) -Isrc src/renderer.c tests/test_renderer.c -lm -o $@
+
+build/test_raster: src/renderer.c src/renderer.h tests/test_raster.c
+	mkdir -p build
+	$(CC) $(CFLAGS) -Isrc tests/test_raster.c -lm -o $@
 
 build/test_course: src/course.c src/course.h src/recovered.c src/recovered.h tests/test_course.c
 	mkdir -p build
@@ -29,4 +34,4 @@ build/preview: src/preview.c src/renderer.c src/renderer.h src/course.c src/cour
 	$(CC) $(CFLAGS) -Isrc -Ibuild src/preview.c src/renderer.c src/course.c src/recovered.c -lm -o $@
 
 clean:
-	rm -f build/test_recovered build/test_renderer build/test_course build/test_session build/preview
+	rm -f build/test_recovered build/test_renderer build/test_raster build/test_course build/test_session build/preview

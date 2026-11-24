@@ -1,0 +1,7 @@
+# Fixed clock: 2026-01-01 00:00. Hit the opening obstacle, then restart.
+wait 4s
+shot /work/build/death.bmp
+EXE
+wait 0.7s
+shot /work/build/restart.bmp
+EXIT
