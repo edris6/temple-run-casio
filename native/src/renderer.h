@@ -5,8 +5,8 @@
 #include <stdint.h>
 #include "course.h"
 
-#define TR_WIDTH 128
-#define TR_HEIGHT 72
+#define TR_WIDTH 192
+#define TR_HEIGHT 108
 
 typedef struct {
     uint16_t pixels[TR_WIDTH * TR_HEIGHT];

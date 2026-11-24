@@ -49,7 +49,7 @@ scheduler was authored for the reconstruction; it is not the recovered
 original generator. The latest source extends the scheduler beyond the first
 12 tiles, but its turning needs further verification across directions and
 seeds. The renderer is new code, not a Unity engine implementation: it uses
-fixed-point triangle transforms at 128×72, affine UV mapping, a reciprocal-depth
+fixed-point triangle transforms at 192×108, affine UV mapping, a reciprocal-depth
 buffer and near-plane clipping. Original lightmaps and full Unity material
 behavior are not used.
 

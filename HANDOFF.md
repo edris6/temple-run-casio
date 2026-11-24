@@ -8,8 +8,9 @@ provenance.
 ## Current state
 
 - Imported original meshes are deduplicated and transformed into fixed-point
-  coordinates. The renderer uses a 128×72 internal framebuffer, scaled 3× to
-  the screen, and an approximate camera based on `TempleRunFlow.SnapCamera`.
+  coordinates. The renderer uses a 192×108 internal framebuffer, scaled 2× to
+  the screen. Its closer camera retains the reference's downward pitch while
+  making the runner easier to see.
 - Left/right move sideways on straight paths and request a turn near a corner;
   up jumps, down slides, 4/6 also move sideways, F1 pauses and EXIT quits.
 - Straight, corner, gap and narrow-path ground polygons come from the temple
@@ -24,9 +25,9 @@ provenance.
   tree and first left turn in the fx-CG50 add-in emulator. An instrumented
   temporary setup confirmed arrow-key sideways movement, a gap jump and a
   fall when the same gap was not jumped.
-- In the same emulator setup, an instrumented two-second opening displayed
-  roughly 30 frames after the renderer changes, versus roughly 7 before. This
-  is a limited emulator comparison, not a physical-device FPS measurement.
+- In one instrumented two-second emulator run, the current higher-resolution
+  opening displayed roughly 20 frames, versus roughly 30 at the preceding
+  128×72 setting. This is not a physical-device FPS measurement.
 - Native host checks run with `make -C native test`; Python asset-converter
   checks run with `python3 -m unittest discover -s tests -v`. The C checks were
   also run with AddressSanitizer and UndefinedBehaviorSanitizer.

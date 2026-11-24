@@ -77,8 +77,8 @@ static Vec3 world_vertex(const float *v, Transform t)
 static int project(Vec3 p, Projected *out)
 {
     if (p.z < 3.0f || p.z > 400.0f) return 0;
-    out->x = clampi((int)(TR_WIDTH / 2 + p.x * 70.0f / p.z), -2048, 2048);
-    out->y = clampi((int)(29 - p.y * 70.0f / p.z), -2048, 2048);
+    out->x = clampi((int)(TR_WIDTH / 2 + p.x * 105.0f / p.z), -2048, 2048);
+    out->y = clampi((int)(43 - p.y * 105.0f / p.z), -2048, 2048);
     out->inv_z = (int32_t)(16777216.0f / p.z);
     return 1;
 }
@@ -187,8 +187,8 @@ static unsigned char fixed_valid[VERTEX_CACHE_CAPACITY];
 static int fixed_project(FixedVertex p, Projected *out)
 {
     if (p.z < 48 || p.z > 6400) return 0;
-    out->x = clampi(TR_WIDTH/2 + p.x*70/p.z, -2048, 2048);
-    out->y = clampi(29 - p.y*70/p.z, -2048, 2048);
+    out->x = clampi(TR_WIDTH/2 + p.x*105/p.z, -2048, 2048);
+    out->y = clampi(43 - p.y*105/p.z, -2048, 2048);
     out->inv_z = 268435456 / p.z;
     out->u = p.u*4096;
     out->v = (2048-p.v)*4096;
@@ -231,11 +231,9 @@ static void fixed_mesh(TRFramebuffer *fb, const TRMesh *m, Transform t, uint16_t
             p.x += (int)((t.side-t.lateral)*16);
             p.z += (int)((t.forward+10)*16);
         }
-        /* TempleRunFlow.SnapCamera: 50 units behind, 35 above, looking at a
-         * point 20 above the runner. The previous camera was 30 behind and
-         * 9 above; rotate by the corresponding approximately 17 degree pitch. */
-        p.y -= 416;
-        p.z += 320;
+        /* Keep the reference's downward pitch, but place the camera closer
+         * to the runner to make the character easier to see on the CG50. */
+        p.y -= 208;
         int camera_y = p.y;
         p.y = (camera_y*3923 + p.z*1177)/4096;
         p.z = (p.z*3923 - camera_y*1177)/4096;
@@ -310,7 +308,7 @@ static void clear_frame(TRFramebuffer *fb)
 {
     for (int y = 0; y < TR_HEIGHT; y++) for (int x = 0; x < TR_WIDTH; x++) {
         int i = y * TR_WIDTH + x;
-        fb->pixels[i] = y < 29 ? 0x8d9a : 0x3326;
+        fb->pixels[i] = y < 43 ? 0x8d9a : 0x3326;
         fb->depth[i] = 0;
     }
 }

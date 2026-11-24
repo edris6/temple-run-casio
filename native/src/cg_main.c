@@ -91,12 +91,9 @@ int main(void)
         /* gint exposes a 396x224 RGB565 framebuffer, with no extra row stride. */
         for (int y = 0; y < TR_HEIGHT; y++) for (int x = 0; x < TR_WIDTH; x++) {
             uint16_t c = frame.pixels[y * TR_WIDTH + x];
-            int pixel = (y * 3 + 4) * DWIDTH + x * 3 + 6;
-            for (int dy = 0; dy < 3; dy++) {
-                gint_vram[pixel + dy*DWIDTH] = c;
-                gint_vram[pixel + dy*DWIDTH + 1] = c;
-                gint_vram[pixel + dy*DWIDTH + 2] = c;
-            }
+            int pixel = (y * 2 + 4) * DWIDTH + x * 2 + 6;
+            gint_vram[pixel] = gint_vram[pixel + 1] = c;
+            gint_vram[pixel + DWIDTH] = gint_vram[pixel + DWIDTH + 1] = c;
         }
         dprint(8, 6, C_WHITE, "SCORE %ld", (long)session.runner.score);
         dprint(8, 22, C_WHITE, "COINS %d", session.runner.coins);
