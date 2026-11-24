@@ -19,6 +19,8 @@ bool tr_jump(TRRunner *p);
 bool tr_slide(TRRunner *p);
 void tr_stumble(TRRunner *p);
 void tr_step(TRRunner *p, float dt, bool over_ground, float ground_height);
+void tr_step_with_ground(TRRunner *p, float dt,
+    bool (*ground_at)(float forward, void *context), void *context);
 void tr_add_coins(TRRunner *p, int count);
 float tr_distance_increment(float displacement, float dt);
 bool tr_point_inside(const TRVec2 *points, size_t count, TRVec2 point);

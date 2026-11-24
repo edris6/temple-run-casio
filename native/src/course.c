@@ -53,7 +53,7 @@ static int turn_heading(int direction, int sign)
 
 /* Exact Region2D vertices from the four temple hole and narrow prefabs.
  * Coordinates are world-aligned in the reconstruction, even when the runner
- * travels south or west. This helper is not yet wired into falling physics. */
+ * travels south or west. */
 bool tr_terrain_ground(const TRTile *tile, float x, float z)
 {
     static const TRVec2 hole_v_a[] = {{10,-30},{10,-25},{-10,-25},{-10,-30}};
@@ -73,6 +73,36 @@ bool tr_terrain_ground(const TRTile *tile, float x, float z)
     }
     if (tile->terrain == 2)
         return tr_point_inside(vertical ? narrow_v : narrow_h, 9, p);
+    return false;
+}
+
+bool tr_course_ground_at(const TRCourse *c, float x, float z)
+{
+    static const TRVec2 straight_v[] = {{10,-30},{10,30},{-10,30},{-10,-30}};
+    static const TRVec2 straight_h[] = {{30,-10},{30,10},{-30,10},{-30,-10}};
+    static const TRVec2 corners[][6] = {
+        {{-30,10},{-30,-10},{-10,-10},{-10,-30},{10,-30},{10,10}},
+        {{30,10},{30,-10},{10,-10},{10,-30},{-10,-30},{-10,10}},
+        {{-30,-10},{-30,10},{-10,10},{-10,30},{10,30},{10,-10}},
+        {{30,-10},{30,10},{10,10},{10,30},{-10,30},{-10,-10}}
+    };
+    static const int left[] = {0,0,2,3,1}, right[] = {0,1,0,2,3};
+    int first = c->current > 1 ? c->current - 2 : 0;
+    int last = c->current + 4 < c->count ? c->current + 4 : c->count;
+    for (int i = first; i < last; i++) {
+        const TRTile *tile = &c->tiles[i];
+        TRVec2 point = {x-tile->x, z-tile->z};
+        if (point.x < -30 || point.x > 30 || point.y < -30 || point.y > 30) continue;
+        if (tile->terrain) {
+            if (tr_terrain_ground(tile, x, z)) return true;
+        } else if (tile->turn) {
+            int corner = tile->turn < 0 ? left[tile->incoming] : right[tile->incoming];
+            if (tr_point_inside(corners[corner], 6, point)) return true;
+        } else {
+            bool vertical = tile->incoming == 1 || tile->incoming == 3;
+            if (tr_point_inside(vertical ? straight_v : straight_h, 4, point)) return true;
+        }
+    }
     return false;
 }
 
@@ -125,9 +155,20 @@ void tr_course_init(TRCourse *c, int seed)
     for (int i = 0; i < TR_COURSE_LOOKAHEAD; i++) append_tile(c, 0);
 }
 
+bool tr_course_turn_near(const TRCourse *c, const TRRunner *p)
+{
+    const TRTile *tile = &c->tiles[c->current];
+    float ahead = (tile->x-c->x)*dx(tile->incoming) + (tile->z-c->z)*dz(tile->incoming);
+    if (tile->turn && !tile->turned && ahead > -30.0f) return true;
+    if (c->current + 1 >= c->count) return false;
+    const TRTile *next_tile = &c->tiles[c->current+1];
+    float next_ahead = (next_tile->x-c->x)*dx(c->heading) + (next_tile->z-c->z)*dz(c->heading);
+    return next_tile->turn && next_ahead > 0 && next_ahead <= p->speed*0.4f+15.0f;
+}
+
 void tr_course_request_turn(TRCourse *c, TRRunner *p, float *lateral, int sign)
 {
-    if (p->dead || c->unsupported_terrain || !sign) return;
+    if (p->dead || !sign) return;
     sign = sign < 0 ? -1 : 1;
     TRTile *tile = &c->tiles[c->current];
     float ahead = (tile->x-c->x)*dx(tile->incoming) + (tile->z-c->z)*dz(tile->incoming);
@@ -171,7 +212,7 @@ static float axis_distance(float p, float low, float high)
 void tr_course_step(TRCourse *c, TRRunner *p, float previous_forward,
     float previous_lateral, float lateral)
 {
-    if (p->dead || c->unsupported_terrain) return;
+    if (p->dead) return;
     float old_x = c->x, old_z = c->z;
     float displacement = p->forward - previous_forward, side = lateral - previous_lateral;
     c->x += displacement * dx(c->heading) + side * dz(c->heading);
@@ -182,7 +223,6 @@ void tr_course_step(TRCourse *c, TRRunner *p, float previous_forward,
     for (int i = first; i < last && !p->dead; i++) {
         TRTile *tile = &c->tiles[i];
         if (fabsf(c->x-tile->x) > 40 || fabsf(c->z-tile->z) > 40) continue;
-        if (tile->terrain) { c->unsupported_terrain = true; break; }
         if (tile->obstacle && !tile->hit) {
             int vertical = tile->incoming == 1 || tile->incoming == 3;
             float l, r, n, f;

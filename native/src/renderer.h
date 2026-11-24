@@ -5,8 +5,8 @@
 #include <stdint.h>
 #include "course.h"
 
-#define TR_WIDTH 192
-#define TR_HEIGHT 108
+#define TR_WIDTH 128
+#define TR_HEIGHT 72
 
 typedef struct {
     uint16_t pixels[TR_WIDTH * TR_HEIGHT];
@@ -19,6 +19,7 @@ typedef struct {
     size_t vertex_count, index_count;
     const float (*uvs)[2];
     const uint16_t *texture; /* 128x128 RGB565, optional */
+    const int16_t (*fixed_vertices)[3], (*fixed_uvs)[2];
 } TRMesh;
 
 typedef struct {

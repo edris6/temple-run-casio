@@ -49,6 +49,34 @@ int main(void)
            s.course.tiles[s.course.current].turned && s.course.heading == 4);
     assert(s.course.x < 0 && s.course.z == 660);
     assert(s.course.view_x < 0 && s.course.view_z > 0);
+
+    tr_session_reset(&s, 1);
+    tr_session_advance(&s, (TRInput){.turn=-1}, 3, 1);
+    assert(!s.runner.dead && !s.runner.stumbling && s.lateral < 0);
+    tr_session_advance(&s, (TRInput){.turn=1}, 3, 1);
+    assert(!s.runner.dead && !s.runner.stumbling && s.lateral == 0);
+
+    tr_session_reset(&s, 1);
+    s.course.current = 10; s.course.z = 610;
+    tr_session_advance(&s, (TRInput){.turn=-1, .tilt=-1}, 1, 1);
+    assert(s.course.buffered_turn == -1 && s.lateral == 0);
+
+    /* Use the imported gap regions for falling and landing after integration. */
+    s = approaching_jump_tree();
+    s.course.tiles[2].obstacle = 0; s.course.tiles[2].terrain = 1;
+    s.course.current = 1; s.course.z = 90; s.runner.forward = 70;
+    TRSession jump_gap = s;
+    for (int i = 0; i < 30; i++)
+        tr_session_advance(&jump_gap, (TRInput){.jump=i == 0}, 1, 1);
+    assert(!jump_gap.runner.dead && jump_gap.course.z > 145 && jump_gap.runner.height == 0);
+    for (int i = 0; i < 30; i++) tr_session_advance(&s, (TRInput){0}, 1, 1);
+    assert(s.runner.dead && s.runner.falling);
+
+    s = approaching_jump_tree();
+    s.course.tiles[2].obstacle = 0; s.course.tiles[2].terrain = 2;
+    s.course.current = 1; s.course.z = 90; s.course.x = -5; s.runner.forward = 70;
+    for (int i = 0; i < 30; i++) tr_session_advance(&s, (TRInput){0}, 1, 1);
+    assert(!s.runner.dead && s.course.z > 145);
     puts("Input and session checks passed");
     return 0;
 }

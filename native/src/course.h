@@ -31,11 +31,12 @@ typedef struct {
     float view_x, view_z; /* smoothed camera facing direction */
     int buffered_turn;
     float turn_buffer_time, elapsed;
-    bool unsupported_terrain;
 } TRCourse;
 
 void tr_course_init(TRCourse *course, int seed);
 bool tr_terrain_ground(const TRTile *tile, float x, float z);
+bool tr_course_ground_at(const TRCourse *course, float x, float z);
+bool tr_course_turn_near(const TRCourse *course, const TRRunner *runner);
 void tr_course_request_turn(TRCourse *course, TRRunner *runner, float *lateral, int sign);
 void tr_course_process_turn(TRCourse *course, TRRunner *runner, float *lateral, float dt);
 void tr_course_step(TRCourse *course, TRRunner *runner, float previous_forward,

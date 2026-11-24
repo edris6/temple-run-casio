@@ -31,6 +31,53 @@ ASSETS = (
     ("Assets/Texture2D/treeTexture.png", "ff584f033757e13448d5f0635d662995", "tree", "texture"),
 )
 
+# Local prefab offsets, in the same order as the native renderer's transforms.
+MESH_ORIGINS = {
+    "path": (559.9522, -1335.3497), "path_h": (569.9522, -1405.3497),
+    "left_corner": (629.9522, -1275.3496), "right_corner": (689.9522, -1275.3496),
+    "corner_c": (639.9522, -1335.3496), "corner_d": (699.9522, -1335.3496),
+    "jump": (1359.9521, -675.3496), "slide": (1349.952, -575.3496),
+    "trip": (1359.9521, -415.3496), "jump_h": (1269.9521, -645.3496),
+    "slide_h": (1269.952, -575.3496), "trip_h": (1269.952, -375.3496),
+    "hole": (1139.9521, -925.3496), "hole_h": (1189.9521, -925.3496),
+    "narrow": (1699.9521, -1235.3496), "narrow_h": (1549.9521, -1295.3496),
+}
+
+
+def deduplicate(vertices, uvs, indices):
+    """Merge only identical position/UV pairs, preserving texture seams."""
+    lookup, positions, texcoords, remapped = {}, [], [], []
+    for index in indices:
+        key = (vertices[index], uvs[index])
+        if key not in lookup:
+            lookup[key] = len(positions)
+            positions.append(vertices[index])
+            texcoords.append(uvs[index])
+        remapped.append(lookup[key])
+    return positions, texcoords, remapped
+
+
+def append_fixed_mesh(path, name, vertices, uvs):
+    """Bake prefab-local transforms and quantize for the CG50 renderer."""
+    if name == "player":
+        transformed = [(x, y - 3.6, z + 30) for x, y, z in vertices]
+    elif name == "coin":
+        transformed = [(x, y - 6, z) for x, y, z in vertices]
+    else:
+        origin_x, origin_z = MESH_ORIGINS[name]
+        transformed = [(-(x + origin_x), z + 6, y + origin_z) for x, y, z in vertices]
+    position_q = [tuple(round(value * 16) for value in point) for point in transformed]
+    uv_q = [tuple(round(value * 2048) for value in uv) for uv in uvs]
+    if any(not -32768 <= value <= 32767 for point in position_q + uv_q for value in point):
+        raise ValueError("fixed-point mesh value out of range: " + name)
+    with path.open("a", encoding="ascii") as output:
+        for suffix, values in (("fixed_vertices", position_q), ("fixed_uvs", uv_q)):
+            output.write("static const int16_t {}_{}[][{}] = {{\n".format(
+                name, suffix, len(values[0])))
+            for point in values:
+                output.write("    {" + ", ".join(map(str, point)) + "},\n")
+            output.write("};\n")
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -47,8 +94,13 @@ def main():
             raise ValueError("unexpected asset GUID: " + str(source))
         if kind == "mesh":
             vertices, uvs, indices = unity_mesh.read_mesh(source)
-            unity_mesh.write_header(args.output / (name + ".h"), name, vertices, uvs, indices)
-            print("{}: {} vertices, {} triangles".format(source, len(vertices), len(indices) // 3))
+            original_count = len(vertices)
+            vertices, uvs, indices = deduplicate(vertices, uvs, indices)
+            output = args.output / (name + ".h")
+            unity_mesh.write_header(output, name, vertices, uvs, indices)
+            append_fixed_mesh(output, name, vertices, uvs)
+            print("{}: {} -> {} vertices, {} triangles".format(
+                source, original_count, len(vertices), len(indices) // 3))
         else:
             unity_texture.convert(source, args.output / (name + "_tex.h"), name)
 

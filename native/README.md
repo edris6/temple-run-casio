@@ -1,11 +1,9 @@
 # Native fx-CG50 port (work in progress)
 
-**Latest source status:** one scripted emulator run jumps the opening tree,
-turns left at the first corner and continues on the connected path. This is
-an incomplete diagnostic: rendering is slow, turn timing remains sensitive,
-and holes and narrow terrain stop the run. See [HANDOFF.md](../HANDOFF.md).
-Their source meshes and ground polygons are imported, but their collision
-and fall behavior is not yet connected to gameplay.
+**Latest source status:** scripted emulator runs jump the opening tree, take
+the first left turn and clear a test gap. A fixed-point renderer and lower
+internal resolution improve emulator performance. This is still an incomplete
+diagnostic; physical-calculator behavior is unverified. See [HANDOFF.md](../HANDOFF.md).
 
 This directory begins a native C port of the Unity reconstruction at
 [`LuciusTran/templerun` commit `65964ad`](https://github.com/LuciusTran/templerun/tree/65964ad).
@@ -16,13 +14,14 @@ original game. The target is an fx-CG50 `.g3a` add-in built with fxSDK and gint.
 
 The runner, paths, corners, coins and trees use exported meshes and downsampled
 textures. Course placement, coin pickup bounds and obstacle collision regions
-come from the reference reconstruction. Up jumps, down slides, left and right
-turn, 4 and 6 change lateral position, F1 pauses, and EXIT quits. After death,
+come from the reference reconstruction. Up jumps and down slides. Left and
+right move sideways on straight paths and turn near corners; 4 and 6 also move
+sideways. F1 pauses, and EXIT quits. After death,
 EXE restarts; new runs use the calculator clock as a seed.
 
-The bounded course generator continues past corners, but the character remains
-in its bind pose. Later course types, animation, original UI, sound, saves and
-the full scene are not integrated.
+The bounded course generator continues past corners, and ground checks cover
+gaps and narrow paths. The character remains in its bind pose. Animation,
+original UI, sound, saves and the full scene are not integrated.
 Input timing and performance still need physical-device testing. Camera framing,
 depth handling and material handling are temporary. The slide-tree mesh and
 collision rule are imported and tested, but the reference's initial course
@@ -38,7 +37,7 @@ generation does not place slide trees on this opening straight.
 | Polygon and segment predicates | `Assets/Scripts/Assembly-CSharp/Region2D.cs`, in local coordinates |
 | Opening tile placements, coin positions and corner choice | `Assets/Restoration/TempleRunFlow.Track.cs` |
 | Obstacle polygons, collision heights and lethal flags | `treeJumpLeftVert`, `treeTripLeftVert` and `treeSlideVert` prefab data |
-| Hole and narrow path meshes and ground polygons | `templeStraightHole{Vert,Horz}` and `templeStraightNarrowSmall{LeftVert,UpHorz}` prefabs (polygons not yet used in play) |
+| Hole and narrow path meshes and ground polygons | `templeStraightHole{Vert,Horz}` and `templeStraightNarrowSmall{LeftVert,UpHorz}` prefabs |
 | Coin radius and player bounds | `TempleRunRules.PickupRadius` and `CharacterPlayer.GetWorldSpaceBounds` |
 | 100 start speed, 210 max speed and acceleration values | `Assets/Resources/TempleRunNativeConfig.json` |
 
@@ -49,18 +48,19 @@ calculation, animation and other host integrations. The source course
 scheduler was authored for the reconstruction; it is not the recovered
 original generator. The latest source extends the scheduler beyond the first
 12 tiles, but its turning needs further verification across directions and
-seeds. The renderer is new code,
-not a Unity engine implementation: it supports position-only triangle meshes,
-affine UV mapping, a reciprocal-depth buffer and near-plane clipping. Original
-lightmaps and full Unity material behavior are not used.
+seeds. The renderer is new code, not a Unity engine implementation: it uses
+fixed-point triangle transforms at 128×72, affine UV mapping, a reciprocal-depth
+buffer and near-plane clipping. Original lightmaps and full Unity material
+behavior are not used.
 
 ## Build
 
 Obtain your own checkout of the reference repository at commit `65964ad`.
 The original assets are not tracked in this repository. The converter reads
-uncompressed Unity YAML mesh vertices, UV0 and indices, and converts PNG textures
-to 128x128 RGB565. It does not yet import material parameters, prefab transforms,
-skeletons or animation. Its output and the
+uncompressed Unity YAML mesh vertices, UV0 and indices, deduplicates identical
+position/UV pairs, bakes selected prefab transforms, and converts PNG textures
+to 128x128 RGB565. It does not yet import material parameters, arbitrary prefab
+transforms, skeletons or animation. Its output and the
 resulting diagnostic binary contain derived game assets: keep them local and
 do not redistribute them. Generated outputs are ignored by Git.
 
@@ -118,9 +118,8 @@ emuCasioCalc build; they are not part of `make test`.
 
 1. Apply prefab transform hierarchies, material settings and lightmaps; replace
    bind-pose runner rendering with skeleton and animation playback.
-2. Verify and fix the in-progress connected course, turn input and camera;
-   then add the remaining ground regions and terrain types.
-3. Add ground gaps, original pause and death panels, and other pickups; verify
-   behavior against the reconstruction.
+2. Verify the connected course, controls, ground checks and camera across
+   directions and seeds against the reconstruction.
+3. Add original pause and death panels and other pickups.
 4. Profile on a calculator, replace expensive software floating point as needed,
    and test keyboard timing, memory use and visuals on real hardware.

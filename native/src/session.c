@@ -1,6 +1,23 @@
 #include "session.h"
 #include <math.h>
 
+typedef struct {
+    const TRCourse *course;
+    float previous_forward, side;
+} GroundQuery;
+
+static bool ground_at(float forward, void *context)
+{
+    const GroundQuery *query = context;
+    const TRCourse *course = query->course;
+    float along = forward - query->previous_forward;
+    int dx = course->heading == 2 ? 1 : course->heading == 4 ? -1 : 0;
+    int dz = course->heading == 1 ? 1 : course->heading == 3 ? -1 : 0;
+    return tr_course_ground_at(course,
+        course->x + along*dx + query->side*dz,
+        course->z + along*dz - query->side*dx);
+}
+
 void tr_session_reset(TRSession *session, int seed)
 {
     tr_reset(&session->runner);
@@ -15,27 +32,36 @@ void tr_session_advance(TRSession *session, TRInput input, int ticks, int new_se
 {
     TRRunner *runner = &session->runner;
     TRCourse *course = &session->course;
-    if (input.toggle_pause && !runner->dead && !course->unsupported_terrain)
+    if (input.toggle_pause && !runner->dead)
         session->paused = !session->paused;
-    if (input.restart && (runner->dead || course->unsupported_terrain)) {
+    if (input.restart && runner->dead) {
         tr_session_reset(session, new_seed);
         ticks = 0; /* Time accumulated on the result screen is not gameplay. */
     }
     /* Apply input queued during rendering before simulating accumulated ticks. */
-    if (input.jump && !course->unsupported_terrain && !session->paused) tr_jump(runner);
-    if (input.slide && !course->unsupported_terrain && !session->paused) tr_slide(runner);
-    if (input.turn && !session->paused)
-        tr_course_request_turn(course, runner, &session->lateral, input.turn);
+    if (input.jump && !session->paused) tr_jump(runner);
+    if (input.slide && !session->paused) tr_slide(runner);
+    if (input.turn && !session->paused) {
+        if (tr_course_turn_near(course, runner)) {
+            tr_course_request_turn(course, runner, &session->lateral, input.turn);
+            input.tilt = 0;
+        } else {
+            /* The same arrow keys move sideways on a straight path. */
+            input.tilt = input.turn;
+        }
+    }
+    if (course->buffered_turn) input.tilt = 0;
     if (ticks > 30) ticks = 30;
     for (int i = 0; i < ticks; i++) {
-        if (course->unsupported_terrain || runner->dead || session->paused) break;
+        if (runner->dead || session->paused) break;
         tr_course_process_turn(course, runner, &session->lateral, 1.0f/30.0f);
         float previous_forward = runner->forward, previous_lateral = session->lateral;
         if (input.tilt < 0) session->lateral -= 0.6f;
         if (input.tilt > 0) session->lateral += 0.6f;
         if (session->lateral < -7) session->lateral = -7;
         if (session->lateral > 7) session->lateral = 7;
-        tr_step(runner, 1.0f/30.0f, true, 0);
+        GroundQuery ground = {course, previous_forward, session->lateral-previous_lateral};
+        tr_step_with_ground(runner, 1.0f/30.0f, ground_at, &ground);
         tr_course_step(course, runner, previous_forward, previous_lateral, session->lateral);
         /* Approximate the reference host's smoothed camera turn. */
         float target_x = course->heading == 2 ? 1 : course->heading == 4 ? -1 : 0;

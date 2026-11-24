@@ -77,8 +77,8 @@ static Vec3 world_vertex(const float *v, Transform t)
 static int project(Vec3 p, Projected *out)
 {
     if (p.z < 3.0f || p.z > 400.0f) return 0;
-    out->x = clampi((int)(TR_WIDTH / 2 + p.x * 105.0f / p.z), -2048, 2048);
-    out->y = clampi((int)(43 - p.y * 105.0f / p.z), -2048, 2048);
+    out->x = clampi((int)(TR_WIDTH / 2 + p.x * 70.0f / p.z), -2048, 2048);
+    out->y = clampi((int)(29 - p.y * 70.0f / p.z), -2048, 2048);
     out->inv_z = (int32_t)(16777216.0f / p.z);
     return 1;
 }
@@ -93,10 +93,9 @@ static int project_vertex(ClipVertex vertex, Projected *out)
     return 1;
 }
 
-static int64_t interpolated(Projected a, Projected b, Projected c,
-    int x, int y, int area, int64_t va, int64_t vb, int64_t vc)
+static int64_t gradient(int va, int vb, int vc, int da, int db, int dc, int area)
 {
-    return (edge(b,c,x,y)*va + edge(c,a,x,y)*vb + edge(a,b,x,y)*vc) / area;
+    return ((int64_t)va*da + (int64_t)vb*db + (int64_t)vc*dc) / area;
 }
 
 static void triangle(TRFramebuffer *fb, Projected a, Projected b, Projected c,
@@ -119,17 +118,19 @@ static void triangle(TRFramebuffer *fb, Projected a, Projected b, Projected c,
     right = clampi(right, 0, TR_WIDTH - 1);
     top = clampi(top, 0, TR_HEIGHT - 1);
     bottom = clampi(bottom, 0, TR_HEIGHT - 1);
-    int64_t z0 = interpolated(a,b,c,left,top,area,a.inv_z,b.inv_z,c.inv_z);
-    int64_t zx = interpolated(a,b,c,left+1,top,area,a.inv_z,b.inv_z,c.inv_z) - z0;
-    int64_t zy = interpolated(a,b,c,left,top+1,area,a.inv_z,b.inv_z,c.inv_z) - z0;
+    int dx0 = c.y-b.y, dx1 = a.y-c.y, dx2 = b.y-a.y;
+    int dy0 = b.x-c.x, dy1 = c.x-a.x, dy2 = a.x-b.x;
+    int64_t zx = gradient(a.inv_z,b.inv_z,c.inv_z,dx0,dx1,dx2,area);
+    int64_t zy = gradient(a.inv_z,b.inv_z,c.inv_z,dy0,dy1,dy2,area);
+    int64_t z0 = a.inv_z + zx*(left-a.x) + zy*(top-a.y);
     int64_t u0 = 0, v0 = 0, ux = 0, vx = 0, uy = 0, vy = 0;
     if (texture) {
-        u0 = interpolated(a,b,c,left,top,area,a.u,b.u,c.u);
-        v0 = interpolated(a,b,c,left,top,area,a.v,b.v,c.v);
-        ux = interpolated(a,b,c,left+1,top,area,a.u,b.u,c.u) - u0;
-        vx = interpolated(a,b,c,left+1,top,area,a.v,b.v,c.v) - v0;
-        uy = interpolated(a,b,c,left,top+1,area,a.u,b.u,c.u) - u0;
-        vy = interpolated(a,b,c,left,top+1,area,a.v,b.v,c.v) - v0;
+        ux = gradient(a.u,b.u,c.u,dx0,dx1,dx2,area);
+        vx = gradient(a.v,b.v,c.v,dx0,dx1,dx2,area);
+        uy = gradient(a.u,b.u,c.u,dy0,dy1,dy2,area);
+        vy = gradient(a.v,b.v,c.v,dy0,dy1,dy2,area);
+        u0 = a.u + ux*(left-a.x) + uy*(top-a.y);
+        v0 = a.v + vx*(left-a.x) + vy*(top-a.y);
     }
     int row0 = edge(a,b,left,top), row1 = edge(b,c,left,top), row2 = edge(c,a,left,top);
     for (int y = top; y <= bottom; y++) {
@@ -176,9 +177,97 @@ static int clip_near(const ClipVertex in[3], ClipVertex out[4])
     return count;
 }
 
+/* Imported meshes carry prefab-local positions in sixteenths of a unit and
+ * UVs in 1/2048ths. The target can then transform vertices using integers. */
+typedef struct { int x, y, z, u, v; } FixedVertex;
+static FixedVertex fixed_cache[VERTEX_CACHE_CAPACITY];
+static Projected fixed_projected[VERTEX_CACHE_CAPACITY];
+static unsigned char fixed_valid[VERTEX_CACHE_CAPACITY];
+
+static int fixed_project(FixedVertex p, Projected *out)
+{
+    if (p.z < 48 || p.z > 6400) return 0;
+    out->x = clampi(TR_WIDTH/2 + p.x*70/p.z, -2048, 2048);
+    out->y = clampi(29 - p.y*70/p.z, -2048, 2048);
+    out->inv_z = 268435456 / p.z;
+    out->u = p.u*4096;
+    out->v = (2048-p.v)*4096;
+    return 1;
+}
+
+static int fixed_clip(const FixedVertex in[3], FixedVertex out[4])
+{
+    int count = 0;
+    for (int i = 0; i < 3; i++) {
+        FixedVertex a = in[i], b = in[(i + 1) % 3];
+        int ai = a.z >= 48, bi = b.z >= 48;
+        if (ai) out[count++] = a;
+        if (ai != bi) {
+            int num = 48 - a.z, den = b.z - a.z;
+            FixedVertex v = {a.x + (int)((int64_t)(b.x-a.x)*num/den),
+                a.y + (int)((int64_t)(b.y-a.y)*num/den), 48,
+                a.u + (int)((int64_t)(b.u-a.u)*num/den),
+                a.v + (int)((int64_t)(b.v-a.v)*num/den)};
+            out[count++] = v;
+        }
+    }
+    return count;
+}
+
+static void fixed_mesh(TRFramebuffer *fb, const TRMesh *m, Transform t, uint16_t base)
+{
+    int ox = (int)((t.tile_x-t.camera_x)*16), oz = (int)((t.tile_z-t.camera_z)*16);
+    int vx = (int)(t.view_x*4096), vz = (int)(t.view_z*4096);
+    int height = (int)(t.height*4.8f);
+    for (size_t i = 0; i < m->vertex_count; i++) {
+        const int16_t *v = m->fixed_vertices[i];
+        FixedVertex p = {v[0], v[1], v[2], m->fixed_uvs[i][0], m->fixed_uvs[i][1]};
+        if (t.kind == 0) p.y += height;
+        else if (t.world) {
+            int x = p.x + ox, z = p.z + oz;
+            p.x = (x*vz-z*vx)/4096;
+            p.z = (x*vx+z*vz)/4096+480;
+        } else {
+            p.x += (int)((t.side-t.lateral)*16);
+            p.z += (int)((t.forward+10)*16);
+        }
+        /* TempleRunFlow.SnapCamera: 50 units behind, 35 above, looking at a
+         * point 20 above the runner. The previous camera was 30 behind and
+         * 9 above; rotate by the corresponding approximately 17 degree pitch. */
+        p.y -= 416;
+        p.z += 320;
+        int camera_y = p.y;
+        p.y = (camera_y*3923 + p.z*1177)/4096;
+        p.z = (p.z*3923 - camera_y*1177)/4096;
+        fixed_cache[i] = p;
+        fixed_valid[i] = (unsigned char)fixed_project(p, &fixed_projected[i]);
+    }
+    for (size_t i = 0; i + 2 < m->index_count; i += 3) {
+        unsigned ia = m->indices[i], ib = m->indices[i+1], ic = m->indices[i+2];
+        if (ia >= m->vertex_count || ib >= m->vertex_count || ic >= m->vertex_count) continue;
+        uint16_t color = (uint16_t)(base + ((i / 3) % 3) * 0x0821);
+        if (fixed_valid[ia] && fixed_valid[ib] && fixed_valid[ic]) {
+            triangle(fb, fixed_projected[ia], fixed_projected[ib], fixed_projected[ic], color, m->texture);
+        } else {
+            FixedVertex in[3] = {fixed_cache[ia], fixed_cache[ib], fixed_cache[ic]}, clipped[4];
+            int n = fixed_clip(in, clipped), valid = 1;
+            Projected p[4];
+            for (int k = 0; k < n; k++) {
+                if (!fixed_project(clipped[k], &p[k])) { valid = 0; break; }
+            }
+            if (valid) for (int k = 1; k + 1 < n; k++)
+                triangle(fb, p[0], p[k], p[k+1], color, m->texture);
+        }
+    }
+}
+
 static void mesh(TRFramebuffer *fb, const TRMesh *m, Transform t, uint16_t base)
 {
     if (!m || !m->vertices || !m->indices) return;
+    if (m->fixed_vertices && m->fixed_uvs && m->vertex_count <= VERTEX_CACHE_CAPACITY) {
+        fixed_mesh(fb, m, t, base);
+        return;
+    }
     bool cache = m->vertex_count <= VERTEX_CACHE_CAPACITY;
     if (cache) for (size_t i = 0; i < m->vertex_count; i++) {
         vertex_cache[i].p = world_vertex(m->vertices[i], t);
@@ -221,7 +310,7 @@ static void clear_frame(TRFramebuffer *fb)
 {
     for (int y = 0; y < TR_HEIGHT; y++) for (int x = 0; x < TR_WIDTH; x++) {
         int i = y * TR_WIDTH + x;
-        fb->pixels[i] = y < 43 ? 0x8d9a : 0x3326;
+        fb->pixels[i] = y < 29 ? 0x8d9a : 0x3326;
         fb->depth[i] = 0;
     }
 }

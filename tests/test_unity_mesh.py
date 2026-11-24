@@ -1,6 +1,7 @@
 import importlib.util
 from pathlib import Path
 import struct
+import sys
 import tempfile
 import unittest
 
@@ -9,6 +10,8 @@ MODULE = Path(__file__).resolve().parents[1] / "native" / "tools" / "unity_mesh.
 spec = importlib.util.spec_from_file_location("unity_mesh", MODULE)
 mesh = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mesh)
+sys.path.insert(0, str(MODULE.parent))
+import import_assets
 
 
 def fixture():
@@ -63,6 +66,18 @@ Mesh:
 
 
 class UnityMeshTests(unittest.TestCase):
+    def test_deduplicates_identical_vertices_without_losing_uv_seams(self):
+        positions = [(0, 0, 0), (1, 0, 0), (0, 0, 0), (0, 0, 0)]
+        uvs = [(0, 0), (1, 0), (0, 0), (1, 1)]
+        indices = [0, 1, 2, 3, 1, 2]
+        actual_positions, actual_uvs, actual_indices = import_assets.deduplicate(
+            positions, uvs, indices)
+        self.assertEqual(len(actual_positions), 3)
+        self.assertEqual([actual_positions[i] for i in actual_indices],
+                         [positions[i] for i in indices])
+        self.assertEqual([actual_uvs[i] for i in actual_indices],
+                         [uvs[i] for i in indices])
+
     def test_reads_interleaved_positions_and_triangle_indices(self):
         source, vertices = fixture()
         with tempfile.TemporaryDirectory() as directory:

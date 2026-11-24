@@ -100,11 +100,6 @@ int main(void)
     c.x = 112; c.z = 0; tr_reset(&runner); runner.forward = 2;
     tr_course_step(&c, &runner, 0, 0, 0);
     assert(runner.dead); /* horizontal prefab region spans x=-7..-3 */
-    c = empty_course(); c.current = 2; c.tiles[2].terrain = 1;
-    c.z = 80; tr_reset(&runner); runner.forward = 1;
-    tr_course_step(&c, &runner, 0, 0, 0);
-    assert(c.unsupported_terrain && !runner.dead);
-
     /* The Region2D ground shapes come directly from the track prefabs. */
     TRTile terrain = {.x=100, .z=200, .incoming=1, .terrain=1};
     assert(tr_terrain_ground(&terrain, 100, 173));
@@ -122,6 +117,11 @@ int main(void)
     assert(tr_terrain_ground(&terrain, 100, 205));
     assert(!tr_terrain_ground(&terrain, 100, 195));
 
+    c = empty_course(); c.current = 2; c.tiles[2].terrain = 1;
+    assert(tr_course_ground_at(&c, 0, 92));
+    assert(!tr_course_ground_at(&c, 0, 120));
+    assert(tr_course_ground_at(&c, 0, 148));
+
     tr_course_init(&c, 1); tr_reset(&runner); runner.stumble_kill_timer = 10;
     int turns = 0;
     for (int step = 0; step < 3000; step++) {
@@ -136,7 +136,7 @@ int main(void)
         }
         float previous = runner.forward; runner.forward += 3.0f;
         tr_course_step(&c, &runner, previous, 0, 0);
-        assert(!runner.dead && !c.unsupported_terrain && c.count <= TR_COURSE_CAPACITY);
+        assert(!runner.dead && c.count <= TR_COURSE_CAPACITY);
     }
     assert(turns > 5 && c.generated > 100);
     puts("Opening course checks passed");

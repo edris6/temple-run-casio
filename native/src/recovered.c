@@ -55,7 +55,8 @@ float tr_distance_increment(float displacement, float dt)
     return dt * 60.0f * scaled_speed * scaled_speed / 20.0f;
 }
 
-void tr_step(TRRunner *p, float dt, bool over_ground, float ground_height)
+static void step(TRRunner *p, float dt, bool over_ground, float ground_height,
+    bool (*ground_at)(float forward, void *context), void *context)
 {
     if (p->dead || dt <= 0.0f) return;
     float acceleration = 0.0f;
@@ -69,6 +70,7 @@ void tr_step(TRRunner *p, float dt, bool over_ground, float ground_height)
     float displacement = p->speed * minf(dt, 1.0f / 15.0f);
     p->forward += displacement;
     p->height += p->vertical_velocity * minf(dt, 1.0f / 15.0f);
+    if (ground_at) over_ground = ground_at(p->forward, context);
     bool landed = over_ground && p->height <= ground_height &&
         (!p->falling || p->height >= ground_height - 6.0f);
     if (landed) {
@@ -91,6 +93,17 @@ void tr_step(TRRunner *p, float dt, bool over_ground, float ground_height)
         /* Preserve unchecked 32-bit score arithmetic without signed overflow. */
         p->score = (int32_t)((uint32_t)p->score + (uint32_t)p->multiplier * (uint32_t)whole);
     }
+}
+
+void tr_step(TRRunner *p, float dt, bool over_ground, float ground_height)
+{
+    step(p, dt, over_ground, ground_height, NULL, NULL);
+}
+
+void tr_step_with_ground(TRRunner *p, float dt,
+    bool (*ground_at)(float forward, void *context), void *context)
+{
+    step(p, dt, false, 0, ground_at, context);
 }
 
 void tr_add_coins(TRRunner *p, int count)
