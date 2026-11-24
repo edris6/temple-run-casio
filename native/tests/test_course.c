@@ -105,6 +105,23 @@ int main(void)
     tr_course_step(&c, &runner, 0, 0, 0);
     assert(c.unsupported_terrain && !runner.dead);
 
+    /* The Region2D ground shapes come directly from the track prefabs. */
+    TRTile terrain = {.x=100, .z=200, .incoming=1, .terrain=1};
+    assert(tr_terrain_ground(&terrain, 100, 173));
+    assert(tr_terrain_ground(&terrain, 100, 227));
+    assert(!tr_terrain_ground(&terrain, 100, 200));
+    assert(!tr_terrain_ground(&terrain, 112, 227));
+    terrain.incoming = 4;
+    assert(tr_terrain_ground(&terrain, 73, 200));
+    assert(tr_terrain_ground(&terrain, 127, 200));
+    assert(!tr_terrain_ground(&terrain, 100, 200));
+    terrain.terrain = 2; terrain.incoming = 3;
+    assert(tr_terrain_ground(&terrain, 95, 200));
+    assert(!tr_terrain_ground(&terrain, 105, 200));
+    terrain.incoming = 2;
+    assert(tr_terrain_ground(&terrain, 100, 205));
+    assert(!tr_terrain_ground(&terrain, 100, 195));
+
     tr_course_init(&c, 1); tr_reset(&runner); runner.stumble_kill_timer = 10;
     int turns = 0;
     for (int step = 0; step < 3000; step++) {

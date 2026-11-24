@@ -17,6 +17,10 @@
 #include "jump_h.h"
 #include "slide_h.h"
 #include "trip_h.h"
+#include "hole.h"
+#include "hole_h.h"
+#include "narrow.h"
+#include "narrow_h.h"
 #include <stdio.h>
 
 static TRFramebuffer fb;
@@ -38,8 +42,13 @@ int main(int argc, char **argv)
     TRMesh jh = {jump_h_vertices,jump_h_indices,JUMP_H_VERTEX_COUNT,JUMP_H_INDEX_COUNT,jump_h_uvs,tree_texture};
     TRMesh sh = {slide_h_vertices,slide_h_indices,SLIDE_H_VERTEX_COUNT,SLIDE_H_INDEX_COUNT,slide_h_uvs,tree_texture};
     TRMesh th = {trip_h_vertices,trip_h_indices,TRIP_H_VERTEX_COUNT,TRIP_H_INDEX_COUNT,trip_h_uvs,tree_texture};
+    TRMesh hole_mesh = {hole_vertices,hole_indices,HOLE_VERTEX_COUNT,HOLE_INDEX_COUNT,hole_uvs,path_texture};
+    TRMesh hole_horizontal = {hole_h_vertices,hole_h_indices,HOLE_H_VERTEX_COUNT,HOLE_H_INDEX_COUNT,hole_h_uvs,path_texture};
+    TRMesh narrow_mesh = {narrow_vertices,narrow_indices,NARROW_VERTEX_COUNT,NARROW_INDEX_COUNT,narrow_uvs,path_texture};
+    TRMesh narrow_horizontal = {narrow_h_vertices,narrow_h_indices,NARROW_H_VERTEX_COUNT,NARROW_H_INDEX_COUNT,narrow_h_uvs,path_texture};
     TRAssets assets = {{&path,&path_horizontal}, {&corners[0],&corners[1],&corners[2],&corners[3]},
-        {&jump,&jh}, {&slide,&sh}, {&trip,&th}, &coin, &player};
+        {&jump,&jh}, {&slide,&sh}, {&trip,&th}, &coin, &player,
+        {&hole_mesh,&hole_horizontal}, {&narrow_mesh,&narrow_horizontal}};
     TRCourse course;
     tr_course_init(&course, 1);
     tr_render_world(&fb, &course, &assets, 0);

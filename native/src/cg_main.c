@@ -25,6 +25,10 @@
 #include "jump_h.h"
 #include "slide_h.h"
 #include "trip_h.h"
+#include "hole.h"
+#include "hole_h.h"
+#include "narrow.h"
+#include "narrow_h.h"
 
 static TRFramebuffer frame;
 static volatile int ticks;
@@ -48,9 +52,14 @@ int main(void)
     TRMesh jump_horizontal = {jump_h_vertices,jump_h_indices,JUMP_H_VERTEX_COUNT,JUMP_H_INDEX_COUNT,jump_h_uvs,tree_texture};
     TRMesh slide_horizontal = {slide_h_vertices,slide_h_indices,SLIDE_H_VERTEX_COUNT,SLIDE_H_INDEX_COUNT,slide_h_uvs,tree_texture};
     TRMesh trip_horizontal = {trip_h_vertices,trip_h_indices,TRIP_H_VERTEX_COUNT,TRIP_H_INDEX_COUNT,trip_h_uvs,tree_texture};
+    TRMesh hole_mesh = {hole_vertices,hole_indices,HOLE_VERTEX_COUNT,HOLE_INDEX_COUNT,hole_uvs,path_texture};
+    TRMesh hole_horizontal = {hole_h_vertices,hole_h_indices,HOLE_H_VERTEX_COUNT,HOLE_H_INDEX_COUNT,hole_h_uvs,path_texture};
+    TRMesh narrow_mesh = {narrow_vertices,narrow_indices,NARROW_VERTEX_COUNT,NARROW_INDEX_COUNT,narrow_uvs,path_texture};
+    TRMesh narrow_horizontal = {narrow_h_vertices,narrow_h_indices,NARROW_H_VERTEX_COUNT,NARROW_H_INDEX_COUNT,narrow_h_uvs,path_texture};
     TRAssets assets = {{&path,&path_horizontal}, {&corner_left,&corner_right,&corner_c_mesh,&corner_d_mesh},
         {&jump_mesh,&jump_horizontal}, {&slide_mesh,&slide_horizontal},
-        {&trip_mesh,&trip_horizontal}, &coin_mesh, &player};
+        {&trip_mesh,&trip_horizontal}, &coin_mesh, &player,
+        {&hole_mesh,&hole_horizontal}, {&narrow_mesh,&narrow_horizontal}};
     TRSession session;
     tr_session_reset(&session, (int)rtc_ticks());
     int timer = timer_configure(TIMER_ANY, 33333, GINT_CALL(tick));

@@ -35,6 +35,7 @@ typedef struct {
 } TRCourse;
 
 void tr_course_init(TRCourse *course, int seed);
+bool tr_terrain_ground(const TRTile *tile, float x, float z);
 void tr_course_request_turn(TRCourse *course, TRRunner *runner, float *lateral, int sign);
 void tr_course_process_turn(TRCourse *course, TRRunner *runner, float *lateral, float dt);
 void tr_course_step(TRCourse *course, TRRunner *runner, float previous_forward,

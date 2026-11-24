@@ -13,6 +13,13 @@ per-instance vertex caching. It stops safely on later hole/narrow terrain,
 which is not implemented. Missing a turn currently causes immediate death at
 the tile edge; the Unity reconstruction falls off the track instead.
 
+The original vertical and horizontal hole and narrow-path meshes are now
+imported and rendered with the transforms from their prefabs. A host preview
+showed a hole mesh, but those tiles have not been tested in the calculator
+emulator. Their original `Region2D` polygons are translated and checked by host
+tests in `tr_terrain_ground`; they are **not connected to falling physics**.
+The run still stops on approach to either terrain type.
+
 The current source cross-compiles and, in one scripted emulator run with clock
 `2026-01-01 00:00`, jumps the opening tree and takes the first left turn. The
 runner then continues along the connected path; see
@@ -32,7 +39,9 @@ The current `native/TRUN3D.g3a` was rebuilt locally and contains generated
 original assets, so remains ignored by Git and must not be redistributed.
 
 Next, profile and improve rendering and input latency; test other turn directions
-and seeds, then port hole and narrow floor meshes and ground-region behavior.
+and seeds. Integrate `tr_terrain_ground` with the runner's post-integration
+ground query, including neighboring regions and fall/landing behavior, and
+test jumping gaps and walking narrow paths before removing the stop.
 The reference asset importer now also
 requires the horizontal path/obstacle meshes and the remaining two corner
 meshes; generated original assets remain Git-ignored and must stay local.

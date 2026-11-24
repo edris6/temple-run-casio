@@ -4,6 +4,8 @@
 turns left at the first corner and continues on the connected path. This is
 an incomplete diagnostic: rendering is slow, turn timing remains sensitive,
 and holes and narrow terrain stop the run. See [HANDOFF.md](../HANDOFF.md).
+Their source meshes and ground polygons are imported, but their collision
+and fall behavior is not yet connected to gameplay.
 
 This directory begins a native C port of the Unity reconstruction at
 [`LuciusTran/templerun` commit `65964ad`](https://github.com/LuciusTran/templerun/tree/65964ad).
@@ -39,6 +41,7 @@ generation does not place slide trees on this opening straight.
 | Polygon and segment predicates | `Assets/Scripts/Assembly-CSharp/Region2D.cs`, in local coordinates |
 | Opening tile placements, coin positions and corner choice | `Assets/Restoration/TempleRunFlow.Track.cs` |
 | Obstacle polygons, collision heights and lethal flags | `treeJumpLeftVert`, `treeTripLeftVert` and `treeSlideVert` prefab data |
+| Hole and narrow path meshes and ground polygons | `templeStraightHole{Vert,Horz}` and `templeStraightNarrowSmall{LeftVert,UpHorz}` prefabs (polygons not yet used in play) |
 | Coin radius and player bounds | `TempleRunRules.PickupRadius` and `CharacterPlayer.GetWorldSpaceBounds` |
 | 100 start speed, 210 max speed and acceleration values | `Assets/Resources/TempleRunNativeConfig.json` |
 

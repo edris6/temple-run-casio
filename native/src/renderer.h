@@ -24,6 +24,7 @@ typedef struct {
 typedef struct {
     const TRMesh *path[2], *corner[4], *jump[2], *slide[2], *trip[2];
     const TRMesh *coin, *player;
+    const TRMesh *hole[2], *narrow[2];
 } TRAssets;
 
 /* Path and player are the exported Object81-Pivot and player meshes. */

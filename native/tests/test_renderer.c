@@ -74,6 +74,21 @@ int main(void)
     course.tiles[0].turn = 1;
     tr_render_world(&b, &course, &assets, 0);
     assert(memcmp(a.pixels, b.pixels, sizeof(a.pixels)) == 0);
+    const float hole_points[][3] = {
+        {-1143.9521f, 922.3496f, -15}, {-1135.9521f, 922.3496f, -15},
+        {-1139.9521f, 928.3496f, -15}
+    };
+    TRMesh hole = {hole_points,good_indices,3,3,NULL,NULL};
+    course.tiles[0].turn = 0; course.tiles[0].terrain = 1;
+    assets.hole[0] = &hole;
+    tr_render_world(&b, &course, &assets, 0);
+    changed = 0;
+    for (int i = 0; i < TR_WIDTH * TR_HEIGHT; i++)
+        if (a.pixels[i] != b.pixels[i]) changed++;
+    assert(changed > 0);
+    course.tiles[0].terrain = 2;
+    tr_render_world(&b, &course, &assets, 0);
+    assert(memcmp(a.pixels, b.pixels, sizeof(a.pixels)) == 0);
     puts("Mesh renderer checks passed");
     return 0;
 }

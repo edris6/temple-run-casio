@@ -51,6 +51,31 @@ static int dz(int direction) { return direction == 1 ? 1 : direction == 3 ? -1 :
 static int turn_heading(int direction, int sign)
 { return sign < 0 ? (direction + 2) % 4 + 1 : direction % 4 + 1; }
 
+/* Exact Region2D vertices from the four temple hole and narrow prefabs.
+ * Coordinates are world-aligned in the reconstruction, even when the runner
+ * travels south or west. This helper is not yet wired into falling physics. */
+bool tr_terrain_ground(const TRTile *tile, float x, float z)
+{
+    static const TRVec2 hole_v_a[] = {{10,-30},{10,-25},{-10,-25},{-10,-30}};
+    static const TRVec2 hole_v_b[] = {{10,25},{10,30},{-10,30},{-10,25}};
+    static const TRVec2 hole_h_a[] = {{30,-10},{30,10},{25,10},{25,-10}};
+    static const TRVec2 hole_h_b[] = {{-25,-10},{-25,10},{-30,10},{-30,-10}};
+    static const TRVec2 narrow_v[] = {
+        {10,-30},{10,-28},{1,-25},{-1,0},{1,25},{10,28},{10,30},{-10,30},{-10,-30}};
+    static const TRVec2 narrow_h[] = {
+        {30,-10},{30,10},{-30,10},{-30,-10},{-28,-10},{-25,-1},{0,1},{25,-1},{28,-10}};
+    TRVec2 p = {x-tile->x, z-tile->z};
+    bool vertical = tile->incoming == 1 || tile->incoming == 3;
+    if (tile->terrain == 1) {
+        const TRVec2 *a = vertical ? hole_v_a : hole_h_a;
+        const TRVec2 *b = vertical ? hole_v_b : hole_h_b;
+        return tr_point_inside(a, 4, p) || tr_point_inside(b, 4, p);
+    }
+    if (tile->terrain == 2)
+        return tr_point_inside(vertical ? narrow_v : narrow_h, 9, p);
+    return false;
+}
+
 static void append_tile(TRCourse *c, float distance)
 {
     TRTile *previous = c->count ? &c->tiles[c->count-1] : NULL;

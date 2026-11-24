@@ -31,7 +31,7 @@ static int edge(Projected a, Projected b, int x, int y)
 static Vec3 world_vertex(const float *v, Transform t)
 {
     Vec3 p;
-    if ((t.kind >= 1 && t.kind <= 4) || (t.kind >= 6 && t.kind <= 13)) {
+    if ((t.kind >= 1 && t.kind <= 4) || (t.kind >= 6 && t.kind <= 17)) {
         /* Object81-Pivot's raw model coordinates include a large local pivot.
          * The corresponding prefab cancels it before rotating the mesh. */
         float origin_x, origin_z;
@@ -47,7 +47,11 @@ static Vec3 world_vertex(const float *v, Transform t)
             case 10: origin_x = 569.9522f; origin_z = -1405.3497f; break;
             case 11: origin_x = 1269.9521f; origin_z = -645.3496f; break;
             case 12: origin_x = 1269.952f; origin_z = -575.3496f; break;
-            default: origin_x = 1269.952f; origin_z = -375.3496f; break;
+            case 13: origin_x = 1269.952f; origin_z = -375.3496f; break;
+            case 14: origin_x = 1139.9521f; origin_z = -925.3496f; break;
+            case 15: origin_x = 1189.9521f; origin_z = -925.3496f; break;
+            case 16: origin_x = 1699.9521f; origin_z = -1235.3496f; break;
+            default: origin_x = 1549.9521f; origin_z = -1295.3496f; break;
         }
         p.x = -(v[0] + origin_x) - t.lateral;
         p.y = v[2] + 30.0f - 15.0f - 9.0f;
@@ -275,6 +279,14 @@ void tr_render_world(TRFramebuffer *fb, const TRCourse *course, const TRAssets *
             int corner = corner_index(tile);
             kind = 6 + corner;
             ground = assets->corner[corner];
+        }
+        else if (tile->terrain == 1) {
+            kind = 14 + axis;
+            ground = assets->hole[axis];
+        }
+        else if (tile->terrain == 2) {
+            kind = 16 + axis;
+            ground = assets->narrow[axis];
         }
         Transform t = world_transform(course, kind, tile->x, tile->z);
         mesh(fb, ground, t, 0x7be9);
