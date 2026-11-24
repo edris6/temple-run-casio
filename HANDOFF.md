@@ -65,8 +65,9 @@ meshes; generated original assets remain Git-ignored and must stay local.
 
 - `make -C native test` passed with AddressSanitizer and UndefinedBehaviorSanitizer,
   including a regression for a jump pressed during a slow-render frame.
-- `python3 -m unittest discover -s tests -v` passed 14 tests, including asset
-  converter checks and the earlier prototypes' tests.
+- At that checkpoint, the asset converter and prototype tests passed. The
+  obsolete prototypes and their dedicated tests have since been removed;
+  `python3 -m unittest discover -s tests -v` runs the converter checks.
 - The native add-in cross-compiled with fxSDK/gint. A scripted headless
   fx-CG50 add-in emulator run jumped the opening tree, collected coins, and
   reached the first corner. Another run showed collision death and verified

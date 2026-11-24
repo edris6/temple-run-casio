@@ -12,20 +12,17 @@ This directory begins a native C port of the Unity reconstruction at
 It does not run Unity or claim that the incomplete reconstruction is the full
 original game. The target is an fx-CG50 `.g3a` add-in built with fxSDK and gint.
 
-## Earlier verified checkpoint
+## Current diagnostic
 
-At commit `ca025d1`, the opening straight was playable in the emulator; the
-full game was not yet ported. The runner, temple path, coins, jump trees and trip trees use their
-exported meshes and downsampled textures. The first corner's original mesh is
-displayed, but turning through it is not implemented yet. Course placement, coin pickup bounds
-and obstacle collision regions come from the reference reconstruction. Up jumps,
-down slides, 4 and 6 change lateral position, F1 pauses, and EXIT quits. After
-death, EXE restarts. That checkpoint stops at the first corner; EXE restarts
-there too. New runs use the calculator clock as a seed.
+The runner, paths, corners, coins and trees use exported meshes and downsampled
+textures. Course placement, coin pickup bounds and obstacle collision regions
+come from the reference reconstruction. Up jumps, down slides, left and right
+turn, 4 and 6 change lateral position, F1 pauses, and EXIT quits. After death,
+EXE restarts; new runs use the calculator clock as a seed.
 
-The current source adds connected corners and a bounded course generator, but
-the character remains in its bind pose. Later course types, animation,
-original UI, sound, saves and the full scene are not integrated.
+The bounded course generator continues past corners, but the character remains
+in its bind pose. Later course types, animation, original UI, sound, saves and
+the full scene are not integrated.
 Input timing and performance still need physical-device testing. Camera framing,
 depth handling and material handling are temporary. The slide-tree mesh and
 collision rule are imported and tested, but the reference's initial course
