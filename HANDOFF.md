@@ -5,6 +5,43 @@ Python or Casio BASIC prototypes. The port is incomplete; see
 [native/README.md](native/README.md) for controls, build instructions and source
 provenance.
 
+## Paused optimization investigation
+
+The user asked to stop. No optimization experiment was applied to tracked
+source, and `native/TRUN3D.g3a` is still the previous 192×108 build from commit
+`b421914`. Do not treat the temporary builds as verified replacements.
+
+An isolated emulator copy sampled the opening run's emulated instruction
+addresses. Of samples mapped to code, about 40% landed in triangle rasterization,
+18% in `dupdate`, and about 10% in mesh handling. Division routines accounted
+for additional samples. This is one emulator workload, not a hardware profile.
+The ignored `native/build/profile.txt` and `native/build/symbols.txt` contain
+the raw sample buckets and symbol list; `/tmp/temple-prof` holds the modified
+profiling emulator. Temporary directories may be deleted by the operating system.
+
+Experiments in `/tmp` only:
+
+- `/tmp/renderer-32bit.c` uses wrapping 32-bit pixel accumulators instead of
+  64-bit additions in the triangle loop. A randomized host comparison produced
+  the same hash for 200 frames of synthetic triangles, and the short emulator
+  benchmark displayed about 22 frames in two seconds versus about 20 before.
+  This is preliminary; test numeric bounds and additional scenes before use.
+- `/tmp/renderer-depth-exact.c` adds a roughly 25 KB reciprocal-depth cache and
+  corrects the estimated quotient to match integer division. One desktop preview
+  was byte-identical; the short emulator benchmark displayed about 23 frames.
+  Arithmetic limits, memory cost and real-device behavior remain unverified.
+- `/tmp/temple-bench/src/cg_main.c` contains an instrumented experiment that
+  initializes both gint display buffers once and writes pairs of pixels with
+  aligned 32-bit stores. The no-clear stage showed about 24 frames in the same
+  short benchmark; the final paired-store result and pause, restart, borders,
+  and physical DMA behavior were not verified. `gint/display.h` documents the
+  CG50's buffer switching and 32-byte VRAM alignment.
+
+Next, resume by testing each change independently against the tracked build,
+including randomized numerical edge cases, screenshots across turns and gaps,
+pause/restart behavior and repeated timing runs. Keep the 192×108 resolution and
+closer camera requested by the user. No physical-device performance is known.
+
 ## Current state
 
 - Imported original meshes are deduplicated and transformed into fixed-point
