@@ -100,10 +100,21 @@ static void triangle(TRFramebuffer *fb, Projected a, Projected b, Projected c,
 {
     int area = edge(a, b, c.x, c.y);
     if (!area) return;
-    int left = clampi((int)fminf(a.x, fminf(b.x, c.x)), 0, TR_WIDTH - 1);
-    int right = clampi((int)fmaxf(a.x, fmaxf(b.x, c.x)), 0, TR_WIDTH - 1);
-    int top = clampi((int)fminf(a.y, fminf(b.y, c.y)), 0, TR_HEIGHT - 1);
-    int bottom = clampi((int)fmaxf(a.y, fmaxf(b.y, c.y)), 0, TR_HEIGHT - 1);
+    int left = a.x < b.x ? a.x : b.x;
+    int right = a.x > b.x ? a.x : b.x;
+    int top = a.y < b.y ? a.y : b.y;
+    int bottom = a.y > b.y ? a.y : b.y;
+    if (c.x < left) left = c.x;
+    if (c.x > right) right = c.x;
+    if (c.y < top) top = c.y;
+    if (c.y > bottom) bottom = c.y;
+    /* Off-screen meshes are common when looking towards a corner. Avoid the
+     * costly interpolation setup when no pixel can land in the framebuffer. */
+    if (right < 0 || left >= TR_WIDTH || bottom < 0 || top >= TR_HEIGHT) return;
+    left = clampi(left, 0, TR_WIDTH - 1);
+    right = clampi(right, 0, TR_WIDTH - 1);
+    top = clampi(top, 0, TR_HEIGHT - 1);
+    bottom = clampi(bottom, 0, TR_HEIGHT - 1);
     int64_t z0 = interpolated(a,b,c,left,top,area,a.inv_z,b.inv_z,c.inv_z);
     int64_t zx = interpolated(a,b,c,left+1,top,area,a.inv_z,b.inv_z,c.inv_z) - z0;
     int64_t zy = interpolated(a,b,c,left,top+1,area,a.inv_z,b.inv_z,c.inv_z) - z0;

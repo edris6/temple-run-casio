@@ -1,0 +1,9 @@
+# Fixed clock: 2026-01-01 00:00. Jump the opening tree and turn left.
+# The input time is sensitive to rendering performance and emulator timing.
+wait 2.6s
+UP
+wait 2.5s
+LEFT
+wait 1.7s
+shot /work/build/first-turn.bmp
+EXIT

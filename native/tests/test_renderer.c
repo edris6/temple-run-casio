@@ -24,6 +24,10 @@ int main(void)
         }
     }
     assert(changed > 10);
+    const float offscreen_points[][3] = {{100,-4,0}, {104,-4,0}, {102,4,0}};
+    TRMesh offscreen = {offscreen_points,good_indices,3,3,NULL,NULL};
+    tr_render_frame(&b, NULL, &offscreen, 0, 0, 0);
+    assert(memcmp(a.pixels, b.pixels, sizeof(a.pixels)) == 0);
     static uint16_t texture[128*128];
     const float uv[][2] = {{0.2f,0.2f},{0.2f,0.2f},{0.2f,0.2f}};
     for (int i = 0; i < 128*128; i++) texture[i] = 0xf800;

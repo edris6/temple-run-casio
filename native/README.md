@@ -1,10 +1,9 @@
 # Native fx-CG50 port (work in progress)
 
-**Latest source status:** connected-turn and renderer performance work is in
-progress and is not yet validated in the calculator emulator. The first-turn
-emulator test failed before the latest optimization. The details below describe
-the earlier stable opening-course checkpoint; see [HANDOFF.md](../HANDOFF.md)
-for the current state and next checks.
+**Latest source status:** one scripted emulator run jumps the opening tree,
+turns left at the first corner and continues on the connected path. This is
+an incomplete diagnostic: rendering is slow, turn timing remains sensitive,
+and holes and narrow terrain stop the run. See [HANDOFF.md](../HANDOFF.md).
 
 This directory begins a native C port of the Unity reconstruction at
 [`LuciusTran/templerun` commit `65964ad`](https://github.com/LuciusTran/templerun/tree/65964ad).
@@ -22,8 +21,9 @@ down slides, 4 and 6 change lateral position, F1 pauses, and EXIT quits. After
 death, EXE restarts. That checkpoint stops at the first corner; EXE restarts
 there too. New runs use the calculator clock as a seed.
 
-The character remains in its bind pose. Connected corners, later course types,
-animation, original UI, sound, saves and the full scene are not integrated.
+The current source adds connected corners and a bounded course generator, but
+the character remains in its bind pose. Later course types, animation,
+original UI, sound, saves and the full scene are not integrated.
 Input timing and performance still need physical-device testing. Camera framing,
 depth handling and material handling are temporary. The slide-tree mesh and
 collision rule are imported and tested, but the reference's initial course
@@ -48,7 +48,8 @@ power-up branches, raised-ground transitions, lateral motion in distance
 calculation, animation and other host integrations. The source course
 scheduler was authored for the reconstruction; it is not the recovered
 original generator. The latest source extends the scheduler beyond the first
-12 tiles, but its turning needs further verification. The renderer is new code,
+12 tiles, but its turning needs further verification across directions and
+seeds. The renderer is new code,
 not a Unity engine implementation: it supports position-only triangle meshes,
 affine UV mapping, a reciprocal-depth buffer and near-plane clipping. Original
 lightmaps and full Unity material behavior are not used.
@@ -107,8 +108,8 @@ From the project root, `python3 -m unittest discover -s tests -v` also checks
 the mesh converter against synthetic fixtures. The runner and path converters
 were additionally exercised against the reference checkout, including the
 runner, path, coin and three obstacle meshes. The emulator was also exercised
-through the opening course with visible coins and a first-corner stop.
-`tests/emulator-opening.txt` and `tests/emulator-pause.txt` are the manual
+through the opening course and one left turn. `tests/emulator-opening.txt`,
+`tests/emulator-pause.txt`, and `tests/emulator-turn.txt` are the manual
 emulator scripts, using `/work` for the mounted `native/` directory and a
 fixed emulator clock of `2026-01-01 00:00`. They require a separate
 emuCasioCalc build; they are not part of `make test`.
