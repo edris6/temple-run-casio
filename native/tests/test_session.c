@@ -1,5 +1,6 @@
 #include "session.h"
 #include <assert.h>
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -118,6 +119,38 @@ int main(void)
                s.course.tiles[s.course.current].turned);
         assert(s.course.heading == (sign < 0 ? 4 : 2));
     }
+    /* A predicted pose is exactly where the next step lands, and predicting
+     * leaves the session alone. */
+    tr_session_reset(&s, 1);
+    s.runner.stumble_kill_timer = 10;
+    for (int i = 0; i < 400; i++) {
+        int tilt = i % 90 < 10 ? -1 : 0;
+        TRSession before = s;
+        TRPose predicted, landed;
+        tr_session_predict(&s, tilt, &predicted);
+        assert(!memcmp(&before, &s, sizeof s));
+        tr_session_advance(&s, (TRInput){.tilt = tilt}, 1, 1);
+        tr_session_pose(&s, &landed);
+        assert(!memcmp(&predicted, &landed, sizeof landed));
+        if (i % 40 == 0) tr_jump(&s.runner);
+    }
+    /* While paused or dead there is nothing to move towards. */
+    TRPose now, then;
+    s.paused = true;
+    tr_session_pose(&s, &now); tr_session_predict(&s, 1, &then);
+    assert(!memcmp(&now, &then, sizeof now));
+
+    /* Blended poses meet both ends and keep the camera direction near unit
+     * length through a turn. */
+    TRPose from = {10, 20, 0, 1, 0}, to = {16, 28, -0.4692f, 0.8831f, 4}, mid;
+    tr_pose_between(&from, &to, 0, &mid);
+    assert(!memcmp(&mid, &from, sizeof mid));
+    tr_pose_between(&from, &to, 1, &mid);
+    assert(mid.x == to.x && mid.z == to.z && mid.height == to.height);
+    assert(fabsf(mid.view_x - to.view_x) < 0.001f && fabsf(mid.view_z - to.view_z) < 0.001f);
+    tr_pose_between(&from, &to, 0.5f, &mid);
+    assert(mid.x == 13 && mid.z == 24 && mid.height == 2);
+    assert(fabsf(mid.view_x*mid.view_x + mid.view_z*mid.view_z - 1) < 0.01f);
     puts("Input and session checks passed");
     return 0;
 }

@@ -4,23 +4,33 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "course.h"
+#include "raster.h"
 
-#define TR_WIDTH 192
-#define TR_HEIGHT 108
-
-typedef struct {
-    uint16_t pixels[TR_WIDTH * TR_HEIGHT];
-    uint16_t depth[TR_WIDTH * TR_HEIGHT];
-} TRFramebuffer;
+#define TR_MESH_VERTEX_LIMIT 512
 
 typedef struct {
-    const float (*vertices)[3];
+    uint16_t corner[3]; /* indices into the mesh's positions */
+    uint16_t floor;     /* lies flat in the temple floor */
+    TRTexCoord uv[3];
+} TRTriangle;
+
+typedef struct {
+    const int16_t (*positions)[3]; /* prefab-local, sixteenths of a unit */
+    const TRTriangle *triangles;
+    size_t position_count, triangle_count;
+    const TRTexture *texture;      /* optional */
+    /* Bounding sphere. Radius zero means never cull. */
+    int16_t centre[3];
+    int32_t radius;
+} TRMesh;
+
+/* The converter's vertices (position and UV pairs) and triangle indices. */
+typedef struct {
+    const int16_t (*positions)[3]; /* prefab-local, sixteenths of a unit */
+    const int16_t (*uvs)[2];       /* 1/2048, v increasing upward */
     const uint16_t *indices;
     size_t vertex_count, index_count;
-    const float (*uvs)[2];
-    const uint16_t *texture; /* 128x128 RGB565, optional */
-    const int16_t (*fixed_vertices)[3], (*fixed_uvs)[2];
-} TRMesh;
+} TRMeshSource;
 
 typedef struct {
     const TRMesh *path[2], *corner[4], *jump[2], *slide[2], *trip[2];
@@ -28,10 +38,13 @@ typedef struct {
     const TRMesh *hole[2], *narrow[2];
 } TRAssets;
 
-/* Path and player are the exported Object81-Pivot and player meshes. */
-void tr_render_frame(TRFramebuffer *fb, const TRMesh *path, const TRMesh *player,
-    float forward, float height, float lateral);
+/* Prepares a mesh for drawing: shares equal positions between triangles, so
+ * each is transformed once, and computes bounds. positions needs room for
+ * vertex_count entries and triangles for index_count / 3. Triangles with
+ * out-of-range indices are dropped. Returns the number of positions used. */
+size_t tr_mesh_build(TRMesh *mesh, const TRMeshSource *source, const TRTexture *texture,
+    int16_t (*positions)[3], TRTriangle *triangles);
 void tr_render_world(TRFramebuffer *fb, const TRCourse *course, const TRAssets *assets,
-    float height, bool sliding);
+    const TRPose *pose, bool sliding);
 
 #endif

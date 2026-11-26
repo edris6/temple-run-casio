@@ -1,24 +1,36 @@
 # Native fx-CG50 port (work in progress)
 
-**Latest source status:** the first junction offers both directions, followed
-by a narrow section, a gap and a low obstacle. A fixed-clock emulator run has
-exercised the opening jump and both junction choices; the other mechanics have
-host-level input and collision tests. Physical-calculator behavior remains
-unverified. See [HANDOFF.md](../HANDOFF.md).
+**Latest status:** the first junction offers both directions, followed by a
+narrow section, a gap and a low obstacle. Fixed-clock emulator runs of the
+current build have exercised the opening jump, both junction choices, pause,
+death and restart; the other mechanics have host-level input and collision
+tests. Physical-calculator behavior remains unverified. See
+[HANDOFF.md](../HANDOFF.md).
 
 This directory begins a native C port of the Unity reconstruction at
 [`LuciusTran/templerun` commit `65964ad`](https://github.com/LuciusTran/templerun/tree/65964ad).
 It does not run Unity or claim that the incomplete reconstruction is the full
 original game. The target is an fx-CG50 `.g3a` add-in built with fxSDK and gint.
 
+## Controls
+
+| Key | Action |
+| --- | --- |
+| Up / Down | Jump / slide |
+| Left / Right | Move sideways on straight paths, turn near corners |
+| 4 / 6 | Move sideways |
+| F1 | Pause and resume |
+| F6 | Show or hide the frame rate |
+| EXE | Restart after death |
+| EXIT | Quit |
+
+New runs use the calculator clock as a seed.
+
 ## Current diagnostic
 
 The runner, paths, corners, coins and trees use exported meshes and downsampled
 textures. Course placement, coin pickup bounds and obstacle collision regions
-come from the reference reconstruction. Up jumps and down slides. Left and
-right move sideways on straight paths and turn near corners; 4 and 6 also move
-sideways. F1 pauses, and EXIT quits. After death,
-EXE restarts; new runs use the calculator clock as a seed.
+come from the reference reconstruction.
 
 The bounded course generator continues past junctions, and ground checks cover
 gaps and narrow paths. Both junction choices lead to the same generated course
@@ -55,11 +67,29 @@ power-up branches, raised-ground transitions, lateral motion in distance
 calculation, animation and other host integrations. The source course
 scheduler was authored for the reconstruction; it is not the recovered
 original generator. The junction and initial obstacle sequence are authored
-adaptations. The renderer is new code, not a Unity engine implementation: it uses
-fixed-point triangle transforms at 192×108, a reciprocal-depth buffer and
-near-plane clipping. Flat temple-floor faces use approximate perspective-correct
-UV mapping; other meshes still use affine UV mapping. Original lightmaps and
-full Unity material behavior are not used.
+adaptations. The renderer is new code, not a Unity engine implementation.
+Original lightmaps and full Unity material behavior are not used.
+
+## How a frame is made
+
+| Stage | File | What it does |
+| --- | --- | --- |
+| Pacing | `cg_main.c` | Simulates at 30 Hz, draws up to 60 frames a second, and places each frame between the current step and the predicted next one |
+| Scene and vertices | `renderer.c` | Picks nearby tiles, skips meshes outside the view, transforms each distinct position once in integer arithmetic, clips at the near plane |
+| Triangle setup | `raster.c` | Rejects hidden and back-facing triangles, picks a 128, 64 or 32 texel texture level, and fills triangles of a few pixels with one sample |
+| Pixel rows | `sh4.S`, `rows.c` | Depth test and texture lookup in assembly, with a C equivalent |
+| Screen | `present.c`, `sh4.S` | Doubles the 192×108 frame into video RAM, which DMA sends while the next frame is drawn |
+
+The temple floor is texture-mapped with perspective correction (the camera is
+level, so one depth serves a whole screen row). Other surfaces use affine
+mapping, which can warp large nearby faces. Back faces are culled everywhere
+except in the assembled junction. The CG50 has no FPU or divide instruction:
+the renderer uses reciprocal tables, while the game logic still uses software
+floating point.
+
+`assets.c` copies meshes and textures from the add-in's ROM into RAM at startup
+and builds the smaller texture levels. Static RAM use is about 376 kB of the
+491 kB available to the add-in.
 
 ## Build
 
@@ -91,44 +121,56 @@ docker run --platform linux/amd64 --network none --rm \
   -v "$PWD:/work" -w /work manawyrm/fxsdk fxsdk build-cg
 ```
 
-The compiled add-in was run headlessly in the open-source
-[emuCasioCalc](https://github.com/joserodpt/emuCasioCalc) fx-CG50 add-in
-emulator. It displayed the imported meshes and textures, updated the score and
-exited after a scripted key sequence. A later scripted run showed coins,
-obstacle collision and death, and pause/resume; two frames taken two seconds
-apart while paused were identical. The test also exposed a missed jump when
-several simulation ticks accumulated during rendering; applying queued input
-before those ticks allowed the scripted jump to clear the tree. The emulator does not establish real
-calculator performance or complete input correctness, and no physical
-calculator has been tested. With a cable, Casio add-ins normally go in storage
-memory; back up important data first. Treat this output as a diagnostic build,
-not a release.
+With a cable, Casio add-ins normally go in storage memory; back up important
+data first. Treat this output as a diagnostic build, not a release.
 
-For a host-rendered still, after generating the asset headers:
+For a host-rendered still, after generating the asset headers (the optional
+number runs that many simulation steps first, without input):
 
 ```sh
 make build/preview
-build/preview build/frame.ppm
+build/preview build/frame.ppm 60
 ```
 
-`make test` runs native C checks for motion, scoring, geometry and the renderer.
-From the project root, `python3 -m unittest discover -s tests -v` also checks
-the mesh converter against synthetic fixtures. The runner and path converters
-were additionally exercised against the reference checkout, including the
-runner, path, coin and three obstacle meshes. The emulator was also exercised
-through the opening course and both first-turn choices. `tests/emulator-opening.txt`,
-`tests/emulator-pause.txt`, `tests/emulator-turn.txt`, and
-`tests/emulator-restart.txt` are the manual
-emulator scripts, using `/work` for the mounted `native/` directory and a
-fixed emulator clock of `2026-01-01 00:00`. They require a separate
-emuCasioCalc build; they are not part of `make test`.
+## Tests
+
+`make test` runs native C checks for motion, scoring, course generation, input,
+geometry and the renderer. The rasterizer is compared with double-precision
+references for coverage, shared edges, depth and texture coordinates. From the
+project root, `python3 -m unittest discover -s tests -v` also checks the asset
+converters against synthetic fixtures.
+
+The host tests run the C forms of the pixel loops. To compare them with the
+assembly on the calculator (or an emulator), build the check add-in, run
+`TRCHECK.g3a`, and expect three `OK` lines. It contains no game assets.
+
+```sh
+docker run --platform linux/amd64 --network none --rm \
+  -v "$PWD:/work" -w /work manawyrm/fxsdk \
+  sh -c 'fxsdk build-cg && cmake --build build-cg --target temple_check'
+```
+
+## Emulator checks
+
+The add-in is run in the open-source
+[emuCasioCalc](https://github.com/joserodpt/emuCasioCalc) fx-CG50 add-in
+emulator. The emulator does not establish real calculator performance or
+complete input correctness, and no physical calculator has been tested.
+
+`tests/emulator-opening.txt`, `tests/emulator-pause.txt`,
+`tests/emulator-turn.txt` and `tests/emulator-restart.txt` are manual key
+scripts, using `/work` for the mounted `native/` directory and a fixed emulator
+clock of `2026-01-01 00:00`. They require a separate emuCasioCalc build and are
+not part of `make test`. The opening script never turns, so its final
+screenshot shows the run ending at the first junction. The scripts depend on
+timing and on the clock-derived seed.
 
 ## Next integration work
 
-1. Apply prefab transform hierarchies, material settings and lightmaps; replace
+1. Profile on a calculator (F6 shows the frame rate) and check keyboard timing,
+   memory use and visuals on real hardware.
+2. Apply prefab transform hierarchies, material settings and lightmaps; replace
    bind-pose runner rendering with skeleton and animation playback.
-2. Verify the connected course, controls, ground checks and camera across
+3. Verify the connected course, controls, ground checks and camera across
    directions and seeds against the reconstruction.
-3. Add original pause and death panels and other pickups.
-4. Profile on a calculator, replace expensive software floating point as needed,
-   and test keyboard timing, memory use and visuals on real hardware.
+4. Add original pause and death panels and other pickups.

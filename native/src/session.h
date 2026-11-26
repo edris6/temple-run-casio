@@ -18,5 +18,12 @@ typedef struct {
 
 void tr_session_reset(TRSession *session, int seed);
 void tr_session_advance(TRSession *session, TRInput input, int ticks, int new_seed);
+/* The camera and runner as simulated so far. */
+void tr_session_pose(const TRSession *session, TRPose *pose);
+/* The pose one step from now if the held tilt continues and nothing else is
+ * pressed. The session itself is unchanged. */
+void tr_session_predict(const TRSession *session, int tilt, TRPose *pose);
+/* The pose a fraction t (0..1) of the way from a to b. */
+void tr_pose_between(const TRPose *a, const TRPose *b, float t, TRPose *pose);
 
 #endif

@@ -26,6 +26,10 @@ typedef struct {
 
 typedef struct { int values[56], next, nextp; } TRRandom;
 
+/* Where to draw the camera and runner. It may lie between two simulation
+ * steps, so that motion stays smooth when frames come faster than steps. */
+typedef struct { float x, z, view_x, view_z, height; } TRPose;
+
 typedef struct {
     TRTile tiles[TR_COURSE_CAPACITY];
     int count, current, generated, until_turn, since_obstacle, last_challenge;

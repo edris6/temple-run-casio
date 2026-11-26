@@ -1,449 +1,348 @@
-/* Compact mesh renderer for the CG50. It is an initial platform
- * replacement, not a replacement for Unity's full rendering pipeline. */
+/* Scene traversal and vertex stage for the CG50: integer transforms of the
+ * imported meshes, culling and clipping. raster.c draws the triangles. This is
+ * a compact platform replacement, not Unity's rendering pipeline. */
 #include "renderer.h"
-#include <math.h>
+#include "reciprocal.h"
+#include "rows.h"
 
-typedef struct { float x, y, z; } Vec3;
-typedef struct { int x, y; int32_t inv_z, u, v; } Projected;
-typedef struct { Vec3 p; float u, v; } ClipVertex;
+/* View space is in sixteenths of a world unit; screen space in sixteenths of
+ * a pixel. The camera looks slightly down from behind the runner. */
+#define NEAR_Z 48
+#define FAR_Z 6400
+#define FOCAL (105 * 16)
+#define CENTRE_X (TR_WIDTH / 2 * 16)
+#define CENTRE_Y (43 * 16)
+#define SCREEN_RIGHT (TR_WIDTH * 16 - CENTRE_X)
+#define SCREEN_BOTTOM (TR_HEIGHT * 16 - CENTRE_Y)
+#define GUARD 14000 /* projected vertices stay this close to the centre */
+#define PITCH_COS 3923 /* Q12 */
+#define PITCH_SIN 1177
+#define CAMERA_HEIGHT 208
+#define CAMERA_BACK 480
+#define FLOOR_Y (-144) /* prefab-local height of the temple floor */
+#define CLIP_LIMIT 12
+#define SKY_ROWS 43
+#define SKY 0x8d9a
+#define GROUND 0x3326
+
+enum {
+    OUT_LEFT = 1, OUT_RIGHT = 2, OUT_TOP = 4, OUT_BOTTOM = 8, OUT_NEAR = 16,
+    OUT_FAR = 32, OUT_GUARD = 64,
+    OUTSIDE = OUT_LEFT | OUT_RIGHT | OUT_TOP | OUT_BOTTOM | OUT_NEAR
+};
+
 typedef struct {
-    int kind;
-    float forward, height, lateral, side;
-    bool world;
-    bool sliding;
-    float tile_x, tile_z, camera_x, camera_z;
-    float view_x, view_z;
-    int junction_part, incoming;
-} Transform;
+    TRScreenVertex screen; /* unset if near, far or guard */
+    uint32_t flags;
+} Vertex;
 
-/* Most reconstructed meshes share vertices between triangles. Transform each
- * vertex once per instance instead of repeating costly software float work. */
-#define VERTEX_CACHE_CAPACITY 1024
-static ClipVertex vertex_cache[VERTEX_CACHE_CAPACITY];
-static Projected projection_cache[VERTEX_CACHE_CAPACITY];
-static unsigned char projection_valid[VERTEX_CACHE_CAPACITY];
+typedef struct {
+    int32_t offset_x, offset_z; /* mesh origin relative to the camera */
+    int32_t view_x, view_z;     /* camera facing, Q12 */
+    int32_t height;             /* runner's jump */
+    bool runner, sliding, floor;
+    int junction_part, incoming;
+} Instance;
+
+typedef struct { int32_t x, y, z, u, v; } ClipVertex;
+
+/* Each position is transformed once per instance. The view-space copy is only
+ * needed for clipping. */
+static Vertex vertex_cache[TR_MESH_VERTEX_LIMIT];
+static int16_t view_cache[TR_MESH_VERTEX_LIMIT][3];
+static int32_t inverse_depth[FAR_Z + 1]; /* 2^36 / depth */
+static int32_t floor_depth[TR_HEIGHT];   /* floor depth * 16 along each row */
 
 static int dir_x(int d) { return d == 2 ? 1 : d == 4 ? -1 : 0; }
 static int dir_z(int d) { return d == 1 ? 1 : d == 3 ? -1 : 0; }
 
-static int clampi(int x, int a, int b) { return x < a ? a : x > b ? b : x; }
-static int edge(Projected a, Projected b, int x, int y)
-{ return (x - a.x) * (b.y - a.y) - (y - a.y) * (b.x - a.x); }
-
-static Vec3 world_vertex(const float *v, Transform t)
+static void prepare_tables(void)
 {
-    Vec3 p;
-    if ((t.kind >= 1 && t.kind <= 4) || (t.kind >= 6 && t.kind <= 17)) {
-        /* Object81-Pivot's raw model coordinates include a large local pivot.
-         * The corresponding prefab cancels it before rotating the mesh. */
-        float origin_x, origin_z;
-        switch (t.kind) {
-            case 1: origin_x = 559.9522f; origin_z = -1335.3497f; break;
-            case 2: origin_x = 1359.9521f; origin_z = -675.3496f; break;
-            case 3: origin_x = 1349.952f; origin_z = -575.3496f; break;
-            case 4: origin_x = 1359.9521f; origin_z = -415.3496f; break;
-            case 6: origin_x = 629.9522f; origin_z = -1275.3496f; break;
-            case 7: origin_x = 689.9522f; origin_z = -1275.3496f; break;
-            case 8: origin_x = 639.9522f; origin_z = -1335.3496f; break;
-            case 9: origin_x = 699.9522f; origin_z = -1335.3496f; break;
-            case 10: origin_x = 569.9522f; origin_z = -1405.3497f; break;
-            case 11: origin_x = 1269.9521f; origin_z = -645.3496f; break;
-            case 12: origin_x = 1269.952f; origin_z = -575.3496f; break;
-            case 13: origin_x = 1269.952f; origin_z = -375.3496f; break;
-            case 14: origin_x = 1139.9521f; origin_z = -925.3496f; break;
-            case 15: origin_x = 1189.9521f; origin_z = -925.3496f; break;
-            case 16: origin_x = 1699.9521f; origin_z = -1235.3496f; break;
-            default: origin_x = 1549.9521f; origin_z = -1295.3496f; break;
-        }
-        p.x = -(v[0] + origin_x) - t.lateral;
-        p.y = v[2] + 30.0f - 15.0f - 9.0f;
-        p.z = v[1] + origin_z + t.forward + 10.0f;
-    } else if (t.kind == 0) {
-        p.x = v[0];
-        p.y = v[1] + 5.4f + t.height * 0.3f - 9.0f;
-        p.z = v[2] + 20.0f + 10.0f;
-        if (t.sliding) {
-            float above_ground = v[1] + 5.4f;
-            p.y = -9.0f + above_ground*0.4f + t.height*0.3f;
-            p.z += above_ground*0.6f;
-        }
-    } else { /* coin prefab is not rotated with the wall meshes */
-        p.x = v[0] + t.side - t.lateral;
-        p.y = v[1] + 3.0f - 9.0f;
-        p.z = v[2] + t.forward + 10.0f;
+    if (inverse_depth[NEAR_Z]) return;
+    for (int z = NEAR_Z; z <= FAR_Z; z++)
+        inverse_depth[z] = (int32_t)(((uint64_t)1 << 36) / (unsigned)z);
+    /* The camera is level from side to side, so a horizontal plane has one
+     * depth per screen row. Solve it once for the temple floor. */
+    for (int row = 0; row < TR_HEIGHT; row++) {
+        int64_t numerator = (int64_t)(FLOOR_Y - CAMERA_HEIGHT) * 4096 * FOCAL * 16;
+        int32_t denominator = PITCH_COS * (CENTRE_Y - (row * 16 + 8)) - PITCH_SIN * FOCAL;
+        int64_t depth = denominator < 0 ? numerator / denominator : FAR_Z * 16;
+        floor_depth[row] = (int32_t)(depth < NEAR_Z * 16 ? NEAR_Z * 16 :
+            depth > FAR_Z * 16 ? FAR_Z * 16 : depth);
     }
-    if (t.world && t.kind != 0) {
-        float x = p.x + t.tile_x - t.camera_x;
-        float z = p.z - 10.0f + t.tile_z - t.camera_z;
-        p.x = x * t.view_z - z * t.view_x;
-        p.z = x * t.view_x + z * t.view_z + 30.0f;
+}
+
+static void project(TRScreenVertex *out, int32_t x, int32_t y, int32_t depth)
+{
+    int32_t inverse = inverse_depth[depth];
+    out->x = CENTRE_X + (int32_t)(((int64_t)(x * FOCAL) * inverse) >> 36);
+    out->y = CENTRE_Y - (int32_t)(((int64_t)(y * FOCAL) * inverse) >> 36);
+    out->z = inverse;
+}
+
+/* Applies the camera pitch, classifies the vertex against the view and
+ * projects it when it can be used directly. */
+static inline void finish_vertex(size_t index, int32_t x, int32_t y, int32_t z)
+{
+    Vertex *out = &vertex_cache[index];
+    y -= CAMERA_HEIGHT;
+    int32_t up = (y * PITCH_COS + z * PITCH_SIN) >> 12;
+    int32_t depth = (z * PITCH_COS - y * PITCH_SIN) >> 12;
+    int32_t across = x * FOCAL, above = up * FOCAL;
+    unsigned flags = 0;
+    if (depth < NEAR_Z) flags = OUT_NEAR;
+    else if (depth > FAR_Z) flags = OUT_FAR;
+    if (across < -CENTRE_X * depth) flags |= OUT_LEFT;
+    if (across > SCREEN_RIGHT * depth) flags |= OUT_RIGHT;
+    if (above > CENTRE_Y * depth) flags |= OUT_TOP;
+    if (above < -SCREEN_BOTTOM * depth) flags |= OUT_BOTTOM;
+    int16_t *view = view_cache[index];
+    view[0] = (int16_t)x; view[1] = (int16_t)up; view[2] = (int16_t)depth;
+    if (!(flags & (OUT_NEAR | OUT_FAR))) {
+        int32_t limit = GUARD * depth;
+        if (across > limit || across < -limit || above > limit || above < -limit)
+            flags |= OUT_GUARD;
+        else project(&out->screen, x, up, depth);
     }
-    return p;
+    out->flags = flags;
 }
 
-static int project(Vec3 p, Projected *out)
+static void transform_mesh(const TRMesh *mesh, const Instance *instance)
 {
-    if (p.z < 3.0f || p.z > 400.0f) return 0;
-    out->x = clampi((int)(TR_WIDTH / 2 + p.x * 105.0f / p.z), -2048, 2048);
-    out->y = clampi((int)(43 - p.y * 105.0f / p.z), -2048, 2048);
-    out->inv_z = (int32_t)(16777216.0f / p.z);
-    return 1;
-}
-
-static int project_vertex(ClipVertex vertex, Projected *out)
-{
-    if (!project(vertex.p, out)) return 0;
-    float u = fmaxf(-200.0f, fminf(200.0f, vertex.u));
-    float v = fmaxf(-200.0f, fminf(200.0f, vertex.v));
-    out->u = (int32_t)(u * (128.0f * 65536.0f));
-    out->v = (int32_t)((1.0f-v) * (128.0f * 65536.0f));
-    return 1;
-}
-
-static int64_t gradient(int va, int vb, int vc, int da, int db, int dc, int area)
-{
-    return ((int64_t)va*da + (int64_t)vb*db + (int64_t)vc*dc) / area;
-}
-
-static int64_t signed_u32(uint32_t value)
-{
-    return value <= INT32_MAX ? (int64_t)value : (int64_t)value - 4294967296LL;
-}
-
-static void triangle(TRFramebuffer *fb, Projected a, Projected b, Projected c,
-    uint16_t color, const uint16_t *texture, bool perspective)
-{
-    int area = edge(a, b, c.x, c.y);
-    if (!area) return;
-    int left = a.x < b.x ? a.x : b.x;
-    int right = a.x > b.x ? a.x : b.x;
-    int top = a.y < b.y ? a.y : b.y;
-    int bottom = a.y > b.y ? a.y : b.y;
-    if (c.x < left) left = c.x;
-    if (c.x > right) right = c.x;
-    if (c.y < top) top = c.y;
-    if (c.y > bottom) bottom = c.y;
-    /* Off-screen meshes are common when looking towards a corner. Avoid the
-     * costly interpolation setup when no pixel can land in the framebuffer. */
-    if (right < 0 || left >= TR_WIDTH || bottom < 0 || top >= TR_HEIGHT) return;
-    left = clampi(left, 0, TR_WIDTH - 1);
-    right = clampi(right, 0, TR_WIDTH - 1);
-    top = clampi(top, 0, TR_HEIGHT - 1);
-    bottom = clampi(bottom, 0, TR_HEIGHT - 1);
-    int dx0 = c.y-b.y, dx1 = a.y-c.y, dx2 = b.y-a.y;
-    int dy0 = b.x-c.x, dy1 = c.x-a.x, dy2 = a.x-b.x;
-    int64_t zx = gradient(a.inv_z,b.inv_z,c.inv_z,dx0,dx1,dx2,area);
-    int64_t zy = gradient(a.inv_z,b.inv_z,c.inv_z,dy0,dy1,dy2,area);
-    int64_t z0 = a.inv_z + zx*(left-a.x) + zy*(top-a.y);
-    int64_t u0 = 0, v0 = 0, ux = 0, vx = 0, uy = 0, vy = 0;
-    if (texture) {
-        int au = a.u, bu = b.u, cu = c.u, av = a.v, bv = b.v, cv = c.v;
-        /* The imported floor UVs fit this range. Other meshes keep their
-         * existing affine path, which also handles unusually large UVs. */
-        if (perspective && (au < -16777216 || au > 16777216 || bu < -16777216 || bu > 16777216 ||
-            cu < -16777216 || cu > 16777216 || av < -16777216 || av > 16777216 ||
-            bv < -16777216 || bv > 16777216 || cv < -16777216 || cv > 16777216)) perspective = false;
-        if (perspective) {
-            au = (int)((int64_t)au*a.inv_z/65536); bu = (int)((int64_t)bu*b.inv_z/65536);
-            cu = (int)((int64_t)cu*c.inv_z/65536); av = (int)((int64_t)av*a.inv_z/65536);
-            bv = (int)((int64_t)bv*b.inv_z/65536); cv = (int)((int64_t)cv*c.inv_z/65536);
-        }
-        ux = gradient(au,bu,cu,dx0,dx1,dx2,area);
-        vx = gradient(av,bv,cv,dx0,dx1,dx2,area);
-        uy = gradient(au,bu,cu,dy0,dy1,dy2,area);
-        vy = gradient(av,bv,cv,dy0,dy1,dy2,area);
-        u0 = au + ux*(left-a.x) + uy*(top-a.y);
-        v0 = av + vx*(left-a.x) + vy*(top-a.y);
-    }
-    int row0 = edge(a,b,left,top), row1 = edge(b,c,left,top), row2 = edge(c,a,left,top);
-    int ex0 = b.y-a.y, ex1 = c.y-b.y, ex2 = a.y-c.y;
-    int ey0 = a.x-b.x, ey1 = b.x-c.x, ey2 = c.x-a.x;
-    if (area < 0) {
-        row0 = -row0; row1 = -row1; row2 = -row2;
-        ex0 = -ex0; ex1 = -ex1; ex2 = -ex2;
-        ey0 = -ey0; ey1 = -ey1; ey2 = -ey2;
-    }
-    /* Texture lookup uses the low 32 bits. Depth at covered pixels is bounded
-     * by the projected vertices (plus small gradient-rounding error), so it
-     * also fits in signed 32 bits. Unsigned wrapping keeps off-triangle
-     * stepping defined even when an extrapolated value leaves that range. */
-    uint32_t row_z = (uint32_t)z0, row_u = (uint32_t)u0, row_v = (uint32_t)v0;
-    for (int y = top; y <= bottom; y++) {
-        int e0 = row0, e1 = row1, e2 = row2;
-        int x = left;
-        /* The covered pixels in a triangle row form one contiguous span.
-         * Skip its empty prefix without interpolating depth and texture. */
-        while (x <= right && (e0 < 0 || e1 < 0 || e2 < 0)) {
-            e0 += ex0; e1 += ex1; e2 += ex2; x++;
-        }
-        uint32_t skipped = (uint32_t)(x-left);
-        uint32_t z = row_z + (uint32_t)zx*skipped;
-        uint32_t u = row_u + (uint32_t)ux*skipped;
-        uint32_t v = row_v + (uint32_t)vx*skipped;
-        int64_t corrected_u = 0, corrected_v = 0, step_u = 0, step_v = 0;
-        bool correction_started = false;
-        for (; x <= right && e0 >= 0 && e1 >= 0 && e2 >= 0; x++) {
-            int i = y * TR_WIDTH + x;
-            uint16_t depth = (uint16_t)((z & 0x80000000u) ? 1 :
-                clampi((int)(z >> 8), 1, 65535));
-            if (depth > fb->depth[i]) {
-                fb->depth[i] = depth;
-                if (texture) {
-                    uint32_t tu = u, tv = v;
-                    if (perspective && z && !(z & 0x80000000u)) {
-                        if (!correction_started) {
-                            /* On a horizontal floor with a level camera,
-                             * depth is approximately constant across a row. */
-                            corrected_u = signed_u32(u)*65536 / z;
-                            corrected_v = signed_u32(v)*65536 / z;
-                            step_u = ux*65536 / z;
-                            step_v = vx*65536 / z;
-                            correction_started = true;
-                        }
-                        tu = (uint32_t)corrected_u;
-                        tv = (uint32_t)corrected_v;
-                    }
-                    fb->pixels[i] = texture[((tv >> 16) & 127u) * 128 + ((tu >> 16) & 127u)];
-                } else fb->pixels[i] = color;
+    if (instance->runner) {
+        for (size_t i = 0; i < mesh->position_count; i++) {
+            const int16_t *v = mesh->positions[i];
+            int32_t y = v[1], z = v[2];
+            if (instance->sliding) { /* until the real animation is imported */
+                int32_t above_ground = y - FLOOR_Y;
+                y = FLOOR_Y + above_ground * 2 / 5;
+                z += above_ground * 3 / 5;
             }
-            e0 += ex0; e1 += ex1; e2 += ex2;
-            z += (uint32_t)zx; u += (uint32_t)ux; v += (uint32_t)vx;
-            if (correction_started) { corrected_u += step_u; corrected_v += step_v; }
+            finish_vertex(i, v[0], y + instance->height, z);
         }
-        row0 += ey0; row1 += ey1; row2 += ey2;
-        row_z += (uint32_t)zy; row_u += (uint32_t)uy; row_v += (uint32_t)vy;
+        return;
+    }
+    int32_t vx = instance->view_x, vz = instance->view_z;
+    for (size_t i = 0; i < mesh->position_count; i++) {
+        const int16_t *v = mesh->positions[i];
+        int32_t x = v[0] + instance->offset_x, z = v[2] + instance->offset_z;
+        finish_vertex(i, (x * vz - z * vx) >> 12, v[1],
+            ((x * vx + z * vz) >> 12) + CAMERA_BACK);
     }
 }
 
-/* Clip in camera space before projection so triangles spanning the near
- * plane, especially the floor under the camera, do not disappear. */
-static int clip_near(const ClipVertex in[3], ClipVertex out[4])
+/* Skip whole meshes that cannot reach the screen. */
+static bool mesh_visible(const TRMesh *mesh, const Instance *instance)
 {
-    int count = 0;
+    if (!mesh->radius) return true;
+    int32_t x = mesh->centre[0] + instance->offset_x;
+    int32_t z = mesh->centre[2] + instance->offset_z;
+    int32_t side = (x * instance->view_z - z * instance->view_x) >> 12;
+    int32_t ahead = ((x * instance->view_x + z * instance->view_z) >> 12) + CAMERA_BACK;
+    int32_t y = mesh->centre[1] - CAMERA_HEIGHT;
+    int32_t up = (y * PITCH_COS + ahead * PITCH_SIN) >> 12;
+    int32_t depth = (ahead * PITCH_COS - y * PITCH_SIN) >> 12;
+    int32_t r = mesh->radius + 4; /* allow for rounding */
+    if (depth + r < NEAR_Z || depth - r > FAR_Z) return false;
+    /* Distances to the four sides of the view, scaled by the normals. */
+    if (side * 105 - 96 * depth > r * 143 || -side * 105 - 96 * depth > r * 143) return false;
+    return up * 105 - 43 * depth <= r * 114 && -up * 105 - 65 * depth <= r * 124;
+}
+
+static int32_t plane_distance(const ClipVertex *p, int plane)
+{
+    switch (plane) {
+        case 0: return p->z - NEAR_Z;
+        case 1: return GUARD * p->z - FOCAL * p->x;
+        case 2: return GUARD * p->z + FOCAL * p->x;
+        case 3: return GUARD * p->z - FOCAL * p->y;
+        default: return GUARD * p->z + FOCAL * p->y;
+    }
+}
+
+static int32_t between(int32_t a, int32_t b, uint32_t t)
+{
+    return a + (int32_t)(((int64_t)(b - a) * t) >> 30);
+}
+
+static int clip_plane(const ClipVertex *in, int count, ClipVertex *out, int plane)
+{
+    int n = 0;
+    for (int i = 0; i < count; i++) {
+        const ClipVertex *a = &in[i], *b = &in[i + 1 == count ? 0 : i + 1];
+        int32_t da = plane_distance(a, plane), db = plane_distance(b, plane);
+        if (da >= 0) out[n++] = *a;
+        if ((da >= 0) != (db >= 0)) {
+            /* Always interpolate from the inside end, so that triangles which
+             * share this edge get the same new vertex and leave no crack. */
+            const ClipVertex *p = da >= 0 ? a : b, *q = da >= 0 ? b : a;
+            uint32_t inside = (uint32_t)(da >= 0 ? da : db);
+            uint32_t total = inside - (uint32_t)(da >= 0 ? db : da);
+            int shift;
+            uint32_t r = tr_reciprocal(total, &shift);
+            uint32_t t = (uint32_t)(((uint64_t)(inside << shift) * r) >> 17);
+            ClipVertex v = {between(p->x, q->x, t), between(p->y, q->y, t),
+                between(p->z, q->z, t), between(p->u, q->u, t), between(p->v, q->v, t)};
+            out[n++] = v;
+        }
+    }
+    return n;
+}
+
+/* Clip in view space, so triangles spanning the near plane (especially the
+ * floor under the camera) do not disappear or distort. */
+static void draw_clipped(TRFramebuffer *fb, const TRTriangle *triangle,
+    const TRMaterial *material)
+{
+    ClipVertex buffer[2][2 * CLIP_LIMIT], *in = buffer[0], *out = buffer[1];
     for (int i = 0; i < 3; i++) {
-        ClipVertex a = in[i], b = in[(i + 1) % 3];
-        int a_in = a.p.z >= 3.0f, b_in = b.p.z >= 3.0f;
-        if (a_in) out[count++] = a;
-        if (a_in != b_in) {
-            float f = (3.0f - a.p.z) / (b.p.z - a.p.z);
-            ClipVertex v = {{a.p.x + (b.p.x-a.p.x)*f,
-                             a.p.y + (b.p.y-a.p.y)*f, 3.0f},
-                            a.u + (b.u-a.u)*f, a.v + (b.v-a.v)*f};
-            out[count++] = v;
-        }
+        const int16_t *v = view_cache[triangle->corner[i]];
+        ClipVertex c = {v[0], v[1], v[2], triangle->uv[i].u, triangle->uv[i].v};
+        in[i] = c;
     }
-    return count;
-}
-
-/* Imported meshes carry prefab-local positions in sixteenths of a unit and
- * UVs in 1/2048ths. The target can then transform vertices using integers. */
-typedef struct { int x, y, z, u, v; } FixedVertex;
-static FixedVertex fixed_cache[VERTEX_CACHE_CAPACITY];
-static Projected fixed_projected[VERTEX_CACHE_CAPACITY];
-static unsigned char fixed_valid[VERTEX_CACHE_CAPACITY];
-
-/* A depth is reused by many vertices. Cache its reciprocal and correct the
- * estimate so screen coordinates match integer division exactly. */
-static uint32_t reciprocal_depth[6401];
-
-static int divide_cached(int numerator, int denominator, uint32_t inverse)
-{
-    int quotient = (int)((int64_t)numerator * inverse / 268435456);
-    int remainder = numerator - quotient * denominator;
-    while (remainder >= denominator) { quotient++; remainder -= denominator; }
-    while (remainder <= -denominator) { quotient--; remainder += denominator; }
-    return quotient;
-}
-
-static int fixed_project(FixedVertex p, Projected *out)
-{
-    if (p.z < 48 || p.z > 6400) return 0;
-    uint32_t inverse = reciprocal_depth[p.z];
-    if (!inverse) inverse = reciprocal_depth[p.z] = 268435456u / (unsigned)p.z;
-    out->x = clampi(TR_WIDTH/2 + divide_cached(p.x*105, p.z, inverse), -2048, 2048);
-    out->y = clampi(43 - divide_cached(p.y*105, p.z, inverse), -2048, 2048);
-    out->inv_z = (int32_t)inverse;
-    out->u = p.u*4096;
-    out->v = (2048-p.v)*4096;
-    return 1;
-}
-
-static int fixed_clip(const FixedVertex in[3], FixedVertex out[4])
-{
-    int count = 0;
-    for (int i = 0; i < 3; i++) {
-        FixedVertex a = in[i], b = in[(i + 1) % 3];
-        int ai = a.z >= 48, bi = b.z >= 48;
-        if (ai) out[count++] = a;
-        if (ai != bi) {
-            int num = 48 - a.z, den = b.z - a.z;
-            FixedVertex v = {a.x + (int)((int64_t)(b.x-a.x)*num/den),
-                a.y + (int)((int64_t)(b.y-a.y)*num/den), 48,
-                a.u + (int)((int64_t)(b.u-a.u)*num/den),
-                a.v + (int)((int64_t)(b.v-a.v)*num/den)};
-            out[count++] = v;
-        }
+    int count = 3;
+    for (int plane = 0; plane < 5; plane++) {
+        count = clip_plane(in, count, out, plane);
+        /* Three corners and five planes give at most eight, barring rounding. */
+        if (count < 3 || count > CLIP_LIMIT) return;
+        ClipVertex *swap = in; in = out; out = swap;
     }
-    return count;
-}
-
-/* The reference temple floor is a flat plane at this prefab-local height.
- * Walls, coins and other meshes retain their existing texture mapping. */
-static bool is_floor_face(const TRMesh *mesh, int kind, unsigned a, unsigned b, unsigned c)
-{
-    bool floor_mesh = kind == 1 || (kind >= 6 && kind <= 10) || (kind >= 14 && kind <= 17);
-    if (!floor_mesh) return false;
-    int ya = mesh->fixed_vertices[a][1], yb = mesh->fixed_vertices[b][1], yc = mesh->fixed_vertices[c][1];
-    return ya >= -145 && ya <= -143 && yb >= -145 && yb <= -143 && yc >= -145 && yc <= -143;
+    TRScreenVertex screen[CLIP_LIMIT];
+    for (int i = 0; i < count; i++) {
+        int32_t depth = in[i].z < NEAR_Z ? NEAR_Z : in[i].z > FAR_Z ? FAR_Z : in[i].z;
+        project(&screen[i], in[i].x, in[i].y, depth);
+    }
+    for (int i = 1; i + 1 < count; i++) {
+        TRTexCoord uv[3] = {{(int16_t)in[0].u, (int16_t)in[0].v},
+            {(int16_t)in[i].u, (int16_t)in[i].v},
+            {(int16_t)in[i + 1].u, (int16_t)in[i + 1].v}};
+        tr_raster_triangle(fb, &screen[0], &screen[i], &screen[i + 1], uv, material);
+    }
 }
 
 /* Combine the two original corner meshes. Remove their walls that would
  * otherwise close the opposite exit; no second path mesh is stored. */
-static bool junction_face(const TRMesh *mesh, Transform t, unsigned a, unsigned b, unsigned c)
+static bool junction_face(const TRMesh *mesh, const Instance *instance,
+    const TRTriangle *triangle)
 {
-    if (!t.junction_part) return true;
-    int x = mesh->fixed_vertices[a][0] + mesh->fixed_vertices[b][0] + mesh->fixed_vertices[c][0];
-    int z = mesh->fixed_vertices[a][2] + mesh->fixed_vertices[b][2] + mesh->fixed_vertices[c][2];
-    int side = x*dir_z(t.incoming) - z*dir_x(t.incoming);
+    if (!instance->junction_part) return true;
+    int x = 0, z = 0;
+    for (int i = 0; i < 3; i++) {
+        x += mesh->positions[triangle->corner[i]][0];
+        z += mesh->positions[triangle->corner[i]][2];
+    }
+    int side = x * dir_z(instance->incoming) - z * dir_x(instance->incoming);
     /* Split across the full depth of the corner. Restricting this split to
      * the far side also removed the near wall of the right-hand exit. */
-    if (t.junction_part == 1) return side <= 384;
+    if (instance->junction_part == 1) return side <= 384;
     return side >= 384;
 }
 
-static void fixed_mesh(TRFramebuffer *fb, const TRMesh *m, Transform t, uint16_t base)
+static void draw_mesh(TRFramebuffer *fb, const TRMesh *mesh, const Instance *instance,
+    uint16_t base)
 {
-    int ox = (int)((t.tile_x-t.camera_x)*16), oz = (int)((t.tile_z-t.camera_z)*16);
-    int vx = (int)(t.view_x*4096), vz = (int)(t.view_z*4096);
-    int height = (int)(t.height*4.8f);
-    for (size_t i = 0; i < m->vertex_count; i++) {
-        const int16_t *v = m->fixed_vertices[i];
-        FixedVertex p = {v[0], v[1], v[2], m->fixed_uvs[i][0], m->fixed_uvs[i][1]};
-        if (t.kind == 0) {
-            if (t.sliding) {
-                int above_ground = p.y + 144;
-                p.y = -144 + above_ground*2/5;
-                p.z += above_ground*3/5;
-            }
-            p.y += height;
-        }
-        else if (t.world) {
-            int x = p.x + ox, z = p.z + oz;
-            p.x = (x*vz-z*vx)/4096;
-            p.z = (x*vx+z*vz)/4096+480;
-        } else {
-            p.x += (int)((t.side-t.lateral)*16);
-            p.z += (int)((t.forward+10)*16);
-        }
-        /* Keep the reference's downward pitch, but place the camera closer
-         * to the runner to make the character easier to see on the CG50. */
-        p.y -= 208;
-        int camera_y = p.y;
-        p.y = (camera_y*3923 + p.z*1177)/4096;
-        p.z = (p.z*3923 - camera_y*1177)/4096;
-        fixed_cache[i] = p;
-        fixed_valid[i] = (unsigned char)fixed_project(p, &fixed_projected[i]);
-    }
-    for (size_t i = 0; i + 2 < m->index_count; i += 3) {
-        unsigned ia = m->indices[i], ib = m->indices[i+1], ic = m->indices[i+2];
-        if (ia >= m->vertex_count || ib >= m->vertex_count || ic >= m->vertex_count) continue;
-        if (!junction_face(m, t, ia, ib, ic)) continue;
-        uint16_t color = (uint16_t)(base + ((i / 3) % 3) * 0x0821);
-        bool perspective = is_floor_face(m, t.kind, ia, ib, ic);
-        if (fixed_valid[ia] && fixed_valid[ib] && fixed_valid[ic]) {
-            triangle(fb, fixed_projected[ia], fixed_projected[ib], fixed_projected[ic], color, m->texture, perspective);
-        } else {
-            FixedVertex in[3] = {fixed_cache[ia], fixed_cache[ib], fixed_cache[ic]}, clipped[4];
-            int n = fixed_clip(in, clipped), valid = 1;
-            Projected p[4];
-            for (int k = 0; k < n; k++) {
-                if (!fixed_project(clipped[k], &p[k])) { valid = 0; break; }
-            }
-            if (valid) for (int k = 1; k + 1 < n; k++)
-                triangle(fb, p[0], p[k], p[k+1], color, m->texture, perspective);
-        }
+    if (!mesh || !mesh->positions || !mesh->triangles ||
+        mesh->position_count > TR_MESH_VERTEX_LIMIT) return;
+    if (!instance->runner && !mesh_visible(mesh, instance)) return;
+    transform_mesh(mesh, instance);
+    /* The assembled junction shows some walls from behind. */
+    TRMaterial plain = {mesh->texture, NULL, base, !instance->junction_part};
+    TRMaterial floor = plain;
+    if (instance->floor) floor.floor_depth = floor_depth;
+    const TRTriangle *end = mesh->triangles + mesh->triangle_count;
+    for (const TRTriangle *t = mesh->triangles; t != end; t++) {
+        const Vertex *a = &vertex_cache[t->corner[0]], *b = &vertex_cache[t->corner[1]],
+            *c = &vertex_cache[t->corner[2]];
+        if (a->flags & b->flags & c->flags & OUTSIDE) continue;
+        unsigned any = a->flags | b->flags | c->flags;
+        if (any & OUT_FAR) continue;
+        if (!junction_face(mesh, instance, t)) continue;
+        const TRMaterial *material = t->floor ? &floor : &plain;
+        if (any & (OUT_NEAR | OUT_GUARD)) draw_clipped(fb, t, material);
+        else tr_raster_triangle(fb, &a->screen, &b->screen, &c->screen, t->uv, material);
     }
 }
 
-static void mesh(TRFramebuffer *fb, const TRMesh *m, Transform t, uint16_t base)
+/* The reference temple floor is a flat plane at this prefab-local height.
+ * Walls, coins and other meshes use affine texture mapping. */
+static bool is_floor_face(const TRMesh *mesh, const TRTriangle *triangle)
 {
-    if (!m || !m->vertices || !m->indices) return;
-    if (m->fixed_vertices && m->fixed_uvs && m->vertex_count <= VERTEX_CACHE_CAPACITY) {
-        fixed_mesh(fb, m, t, base);
-        return;
+    for (int i = 0; i < 3; i++) {
+        int y = mesh->positions[triangle->corner[i]][1];
+        if (y < FLOOR_Y - 1 || y > FLOOR_Y + 1) return false;
     }
-    bool cache = m->vertex_count <= VERTEX_CACHE_CAPACITY;
-    if (cache) for (size_t i = 0; i < m->vertex_count; i++) {
-        vertex_cache[i].p = world_vertex(m->vertices[i], t);
-        vertex_cache[i].u = m->uvs ? m->uvs[i][0] : 0;
-        vertex_cache[i].v = m->uvs ? m->uvs[i][1] : 0;
-        projection_valid[i] = (unsigned char)project_vertex(vertex_cache[i], &projection_cache[i]);
+    return true;
+}
+
+static void mesh_bounds(TRMesh *mesh)
+{
+    mesh->radius = 0;
+    if (!mesh->position_count) return;
+    int32_t low[3], high[3];
+    for (int k = 0; k < 3; k++) low[k] = high[k] = mesh->positions[0][k];
+    for (size_t i = 1; i < mesh->position_count; i++) for (int k = 0; k < 3; k++) {
+        if (mesh->positions[i][k] < low[k]) low[k] = mesh->positions[i][k];
+        if (mesh->positions[i][k] > high[k]) high[k] = mesh->positions[i][k];
     }
-    for (size_t i = 0; i + 2 < m->index_count; i += 3) {
-        unsigned ia = m->indices[i], ib = m->indices[i+1], ic = m->indices[i+2];
-        if (ia >= m->vertex_count || ib >= m->vertex_count || ic >= m->vertex_count) continue;
-        unsigned ids[] = {ia,ib,ic};
-        if (cache && projection_valid[ia] && projection_valid[ib] && projection_valid[ic]) {
-            triangle(fb, projection_cache[ia], projection_cache[ib], projection_cache[ic],
-                (uint16_t)(base + ((i / 3) % 3) * 0x0821), m->uvs ? m->texture : NULL, false);
-            continue;
-        }
-        ClipVertex input[3], clipped[4];
+    for (int k = 0; k < 3; k++) mesh->centre[k] = (int16_t)((low[k] + high[k]) / 2);
+    int64_t furthest = 0;
+    for (size_t i = 0; i < mesh->position_count; i++) {
+        int64_t sum = 0;
         for (int k = 0; k < 3; k++) {
-            if (cache) input[k] = vertex_cache[ids[k]];
-            else {
-                input[k].p = world_vertex(m->vertices[ids[k]], t);
-                input[k].u = m->uvs ? m->uvs[ids[k]][0] : 0;
-                input[k].v = m->uvs ? m->uvs[ids[k]][1] : 0;
-            }
+            int64_t d = mesh->positions[i][k] - mesh->centre[k];
+            sum += d * d;
         }
-        int count = clip_near(input, clipped);
-        Projected p[4];
-        int valid = 1;
-        for (int k = 0; k < count; k++) {
-            if (!project_vertex(clipped[k], &p[k])) { valid = 0; break; }
-        }
-        if (!valid) continue;
-        for (int k = 1; k + 1 < count; k++)
-            triangle(fb, p[0],p[k],p[k+1],
-                (uint16_t)(base + ((i / 3) % 3) * 0x0821), m->uvs ? m->texture : NULL, false);
+        if (sum > furthest) furthest = sum;
     }
+    int32_t radius = 0;
+    for (int32_t bit = 1 << 16; bit; bit >>= 1)
+        if ((int64_t)(radius + bit) * (radius + bit) <= furthest) radius += bit;
+    mesh->radius = radius + 1;
 }
 
+size_t tr_mesh_build(TRMesh *mesh, const TRMeshSource *source, const TRTexture *texture,
+    int16_t (*positions)[3], TRTriangle *triangles)
+{
+    size_t used = 0, count = 0;
+    for (size_t i = 0; i + 2 < source->index_count; i += 3) {
+        const uint16_t *index = &source->indices[i];
+        if (index[0] >= source->vertex_count || index[1] >= source->vertex_count ||
+            index[2] >= source->vertex_count) continue;
+        TRTriangle *triangle = &triangles[count++];
+        for (int k = 0; k < 3; k++) {
+            const int16_t *v = source->positions[index[k]];
+            size_t found = 0;
+            while (found < used && (positions[found][0] != v[0] ||
+                positions[found][1] != v[1] || positions[found][2] != v[2])) found++;
+            if (found == used) {
+                positions[used][0] = v[0]; positions[used][1] = v[1];
+                positions[used][2] = v[2];
+                used++;
+            }
+            triangle->corner[k] = (uint16_t)found;
+            TRTexCoord uv = {0, 0};
+            if (source->uvs) {
+                uv.u = source->uvs[index[k]][0];
+                uv.v = (int16_t)(2048 - source->uvs[index[k]][1]);
+            }
+            triangle->uv[k] = uv;
+        }
+    }
+    *mesh = (TRMesh){.positions = (const int16_t (*)[3])positions, .triangles = triangles,
+        .position_count = used, .triangle_count = count, .texture = texture};
+    for (size_t i = 0; i < count; i++)
+        triangles[i].floor = is_floor_face(mesh, &triangles[i]);
+    mesh_bounds(mesh);
+    return used;
+}
+
+/* Sky and ground, at depth zero so that any geometry covers them. */
 static void clear_frame(TRFramebuffer *fb)
 {
-    for (int y = 0; y < TR_HEIGHT; y++) for (int x = 0; x < TR_WIDTH; x++) {
-        int i = y * TR_WIDTH + x;
-        fb->pixels[i] = y < 43 ? 0x8d9a : 0x3326;
-        fb->depth[i] = 0;
-    }
-}
-
-void tr_render_frame(TRFramebuffer *fb, const TRMesh *path, const TRMesh *player,
-    float forward, float height, float lateral)
-{
-    clear_frame(fb);
-    float offset = fmodf(forward, 60.0f);
-    for (int i = -1; i < 5; i++) {
-        float center = i * 60.0f - offset;
-        if (center + 40.0f < 3.0f || center - 20.0f > 250.0f) continue;
-        Transform t = {.kind=1, .forward=center, .lateral=lateral};
-        mesh(fb, path, t, 0x7be9);
-    }
-    Transform runner = {.kind=0, .height=height};
-    mesh(fb, player, runner, 0x9a63);
-}
-
-static Transform world_transform(const TRCourse *course, int kind, float x, float z)
-{
-    Transform t = {0};
-    t.kind = kind; t.world = true; t.tile_x = x; t.tile_z = z;
-    t.camera_x = course->x; t.camera_z = course->z;
-    t.view_x = course->view_x; t.view_z = course->view_z;
-    if (t.view_x == 0 && t.view_z == 0) {
-        t.view_x = (float)dir_x(course->heading); t.view_z = (float)dir_z(course->heading);
-    }
-    return t;
+    _Static_assert(TR_WIDTH % 8 == 0, "rows must be whole cache lines");
+    tr_fill(fb->pixels, SKY_ROWS * TR_WIDTH / 8, SKY);
+    tr_fill(fb->pixels + SKY_ROWS * TR_WIDTH,
+        (TR_HEIGHT - SKY_ROWS) * TR_WIDTH / 8, GROUND);
 }
 
 static int corner_index(const TRTile *tile, int sign)
@@ -453,65 +352,83 @@ static int corner_index(const TRTile *tile, int sign)
     return sign < 0 ? left[tile->incoming] : right[tile->incoming];
 }
 
-void tr_render_world(TRFramebuffer *fb, const TRCourse *course, const TRAssets *assets,
-    float height, bool sliding)
+typedef struct {
+    Instance instance; /* camera facing, shared by every mesh */
+    int32_t camera_x, camera_z;
+} Camera;
+
+static void draw_at(TRFramebuffer *fb, const TRMesh *mesh, const Camera *camera,
+    Instance instance, int x, int z, uint16_t color)
 {
+    instance.offset_x = x * 16 - camera->camera_x;
+    instance.offset_z = z * 16 - camera->camera_z;
+    draw_mesh(fb, mesh, &instance, color);
+}
+
+static void draw_tile(TRFramebuffer *fb, const TRTile *tile, const TRAssets *assets,
+    const Camera *camera)
+{
+    int axis = tile->incoming == 1 || tile->incoming == 3 ? 0 : 1;
+    Instance ground = camera->instance;
+    ground.floor = true;
+    if (tile->junction) {
+        ground.incoming = tile->incoming;
+        ground.junction_part = 1;
+        draw_at(fb, assets->corner[corner_index(tile, -1)], camera, ground,
+            tile->x, tile->z, 0x7be9);
+        ground.junction_part = 2;
+        draw_at(fb, assets->corner[corner_index(tile, 1)], camera, ground,
+            tile->x, tile->z, 0x7be9);
+        ground.junction_part = 0;
+        int exit_axis = tile->outgoing == 1 || tile->outgoing == 3 ? 0 : 1;
+        draw_at(fb, assets->path[exit_axis], camera, ground,
+            tile->x - 60 * dir_x(tile->outgoing),
+            tile->z - 60 * dir_z(tile->outgoing), 0x7be9);
+    } else {
+        const TRMesh *mesh = tile->turn ? assets->corner[corner_index(tile, tile->turn)] :
+            tile->terrain == 1 ? assets->hole[axis] :
+            tile->terrain == 2 ? assets->narrow[axis] : assets->path[axis];
+        draw_at(fb, mesh, camera, ground, tile->x, tile->z, 0x7be9);
+    }
+    if (tile->obstacle) {
+        const TRMesh *obstacle = tile->obstacle == 1 ? assets->jump[axis] :
+            tile->obstacle == 2 ? assets->slide[axis] : assets->trip[axis];
+        draw_at(fb, obstacle, camera, camera->instance, tile->x, tile->z, 0x7be9);
+    }
+    if (tile->coin_lane != 2) for (int j = 0; j < 6; j++) {
+        if (tile->coins_collected & (1u << j)) continue;
+        int along = -24 + j * 9, lane = 6 * tile->coin_lane;
+        int x = tile->x + along * dir_x(tile->incoming) + lane * dir_z(tile->incoming);
+        int z = tile->z + along * dir_z(tile->incoming) - lane * dir_x(tile->incoming);
+        draw_at(fb, assets->coin, camera, camera->instance, x, z, 0xfc00);
+    }
+}
+
+void tr_render_world(TRFramebuffer *fb, const TRCourse *course, const TRAssets *assets,
+    const TRPose *pose, bool sliding)
+{
+    prepare_tables();
     clear_frame(fb);
+    float view_x = pose->view_x, view_z = pose->view_z;
+    if (view_x == 0 && view_z == 0) {
+        view_x = (float)dir_x(course->heading); view_z = (float)dir_z(course->heading);
+    }
+    Camera camera = {{0}, (int32_t)(pose->x * 16), (int32_t)(pose->z * 16)};
+    camera.instance.view_x = (int32_t)(view_x * 4096);
+    camera.instance.view_z = (int32_t)(view_z * 4096);
+
+    /* The runner is nearest, so drawing it first saves hidden floor pixels. */
+    Instance runner = {.runner = true, .sliding = sliding,
+        .height = (int32_t)(pose->height * 4.8f)};
+    draw_mesh(fb, assets->player, &runner, 0x9a63);
+
     for (int i = 0; i < course->count; i++) {
         const TRTile *tile = &course->tiles[i];
-        float x = tile->x-course->x, z = tile->z-course->z;
-        float vx = course->view_x, vz = course->view_z;
-        if (vx == 0 && vz == 0) { vx = (float)dir_x(course->heading); vz = (float)dir_z(course->heading); }
-        float ahead = x*vx+z*vz;
-        float side = x*vz-z*vx;
-        if (ahead < -70 || ahead > 280 || fabsf(side) > 150) continue;
-        int axis = tile->incoming == 1 || tile->incoming == 3 ? 0 : 1;
-        int kind = axis ? 10 : 1;
-        const TRMesh *ground = assets->path[axis];
-        if (tile->turn) {
-            int corner = corner_index(tile, tile->turn);
-            kind = 6 + corner;
-            ground = assets->corner[corner];
-        }
-        else if (tile->terrain == 1) {
-            kind = 14 + axis;
-            ground = assets->hole[axis];
-        }
-        else if (tile->terrain == 2) {
-            kind = 16 + axis;
-            ground = assets->narrow[axis];
-        }
-        Transform t = world_transform(course, kind, tile->x, tile->z);
-        if (tile->junction) {
-            int left = corner_index(tile, -1), right = corner_index(tile, 1);
-            t = world_transform(course, 6 + left, tile->x, tile->z);
-            t.junction_part = 1; t.incoming = tile->incoming;
-            mesh(fb, assets->corner[left], t, 0x7be9);
-            t = world_transform(course, 6 + right, tile->x, tile->z);
-            t.junction_part = 2; t.incoming = tile->incoming;
-            mesh(fb, assets->corner[right], t, 0x7be9);
-            int exit_axis = tile->outgoing == 1 || tile->outgoing == 3 ? 0 : 1;
-            t = world_transform(course, exit_axis ? 10 : 1,
-                tile->x - 60*dir_x(tile->outgoing), tile->z - 60*dir_z(tile->outgoing));
-            mesh(fb, assets->path[exit_axis], t, 0x7be9);
-        } else mesh(fb, ground, t, 0x7be9);
-        if (tile->obstacle) {
-            kind = (tile->obstacle == 1 ? 2 : tile->obstacle == 2 ? 3 : 4) + (axis ? 9 : 0);
-            const TRMesh *obstacle = tile->obstacle == 1 ? assets->jump[axis] :
-                tile->obstacle == 2 ? assets->slide[axis] : assets->trip[axis];
-            t = world_transform(course, kind, tile->x, tile->z);
-            mesh(fb, obstacle, t, 0x7be9);
-        }
-        if (tile->coin_lane != 2) for (int j = 0; j < 6; j++) {
-            if (tile->coins_collected & (1u << j)) continue;
-            float along = -24.0f + j * 9.0f, lane = 6.0f * tile->coin_lane;
-            float coin_x = tile->x + along*dir_x(tile->incoming) + lane*dir_z(tile->incoming);
-            float coin_z = tile->z + along*dir_z(tile->incoming) - lane*dir_x(tile->incoming);
-            t = world_transform(course, 5, coin_x, coin_z);
-            mesh(fb, assets->coin, t, 0xfc00);
-        }
+        int32_t x = tile->x * 16 - camera.camera_x, z = tile->z * 16 - camera.camera_z;
+        int32_t ahead = (x * camera.instance.view_x + z * camera.instance.view_z) >> 12;
+        int32_t side = (x * camera.instance.view_z - z * camera.instance.view_x) >> 12;
+        if (ahead < -70 * 16 || ahead > 280 * 16 || side > 150 * 16 || side < -150 * 16)
+            continue;
+        draw_tile(fb, tile, assets, &camera);
     }
-    /* Temporary posture until the original skeletal animation is imported. */
-    Transform runner = {.kind=0, .height=height, .sliding=sliding};
-    mesh(fb, assets->player, runner, 0x9a63);
 }

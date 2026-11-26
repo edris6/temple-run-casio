@@ -5,10 +5,15 @@ This project is an incomplete native C port of the
 targeting an fx-CG50 add-in. It translates selected recovered gameplay and
 renders meshes imported from the reconstruction; it does not run Unity itself.
 
-Scripted emulator runs cleared the opening tree, first left turn and a test gap.
-The renderer uses a lower internal resolution to improve speed. Animation, UI,
-audio and saves are unfinished; physical-calculator performance and compatibility
-have not been verified.
+The renderer draws at 192×108, scaled 2× to the screen, using integer
+arithmetic and a few hand-written SH-4 assembly loops. In a scripted gameplay
+run in an fx-CG50 emulator it showed about 57 frames a second. The emulator
+estimates timing and does not model the processor's caches, so **speed on a
+physical calculator is unknown**; press F6 in the game to show the frame rate.
+
+Scripted emulator runs cleared the opening tree and the first junction in both
+directions. Animation, the original UI, audio and saves are unfinished, and
+calculator compatibility has not been verified.
 
 See [native/README.md](native/README.md) for controls, provenance, build and test
 instructions, and [HANDOFF.md](HANDOFF.md) for the current state and next steps.

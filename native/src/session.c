@@ -72,3 +72,32 @@ void tr_session_advance(TRSession *session, TRInput input, int ticks, int new_se
         if (length > 0) { course->view_x /= length; course->view_z /= length; }
     }
 }
+
+void tr_session_pose(const TRSession *session, TRPose *pose)
+{
+    const TRCourse *course = &session->course;
+    pose->x = course->x; pose->z = course->z;
+    pose->view_x = course->view_x; pose->view_z = course->view_z;
+    pose->height = session->runner.height;
+}
+
+void tr_session_predict(const TRSession *session, int tilt, TRPose *pose)
+{
+    static TRSession next; /* too large to spend on the calculator's stack */
+    next = *session;
+    tr_session_advance(&next, (TRInput){.tilt = tilt}, 1, 0);
+    tr_session_pose(&next, pose);
+}
+
+void tr_pose_between(const TRPose *a, const TRPose *b, float t, TRPose *pose)
+{
+    pose->x = a->x + (b->x - a->x) * t;
+    pose->z = a->z + (b->z - a->z) * t;
+    pose->height = a->height + (b->height - a->height) * t;
+    float x = a->view_x + (b->view_x - a->view_x) * t;
+    float z = a->view_z + (b->view_z - a->view_z) * t;
+    /* One Newton step towards unit length is enough between adjacent steps
+     * and avoids a square root. */
+    float scale = 1.5f - 0.5f * (x * x + z * z);
+    pose->view_x = x * scale; pose->view_z = z * scale;
+}

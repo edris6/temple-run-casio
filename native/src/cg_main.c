@@ -1,84 +1,55 @@
 /* CG50 diagnostic for the recovered runner and real exported meshes.
  * This is not yet the full game; see native/README.md. */
+#include <gint/clock.h>
 #include <gint/display.h>
+#include <gint/dma.h>
+#include <gint/drivers/r61524.h>
 #include <gint/keyboard.h>
 #include <gint/rtc.h>
 #include <gint/timer.h>
 #include <stdint.h>
-#include "renderer.h"
-#include "recovered.h"
+#include "assets.h"
+#include "present.h"
 #include "session.h"
-#include "player.h"
-#include "path.h"
-#include "player_tex.h"
-#include "path_tex.h"
-#include "jump.h"
-#include "slide.h"
-#include "trip.h"
-#include "coin.h"
-#include "tree_tex.h"
-#include "left_corner.h"
-#include "right_corner.h"
-#include "path_h.h"
-#include "corner_c.h"
-#include "corner_d.h"
-#include "jump_h.h"
-#include "slide_h.h"
-#include "trip_h.h"
-#include "hole.h"
-#include "hole_h.h"
-#include "narrow.h"
-#include "narrow_h.h"
 
-/* gint VRAM is 32-byte aligned; each destination pair is 4-byte aligned. */
-typedef uint32_t __attribute__((__may_alias__)) TRPixelPair;
-_Static_assert(DWIDTH % 2 == 0, "VRAM row must align pixel pairs");
-_Static_assert(TR_WIDTH * 2 + 12 == DWIDTH && TR_HEIGHT * 2 + 8 == DHEIGHT,
-    "Scaled framebuffer must overwrite the full display interior");
+/* The clock runs faster than the simulation, to place frames between steps. */
+#define CLOCK_HZ 480
+#define STEP_UNITS (CLOCK_HZ / 30)
+#define FRAME_UNITS (CLOCK_HZ / 60) /* draw at most 60 frames a second */
+#define MAX_STEPS 30
+
+_Static_assert(DWIDTH == TR_SCREEN_WIDTH && DHEIGHT == TR_SCREEN_HEIGHT,
+    "The presenter expects the full CG50 display");
 static TRFramebuffer frame;
-static volatile int ticks;
+static volatile uint32_t clock_units;
 
-/* Keep elapsed simulation time when a frame takes longer than 1/30 second. */
-static int tick(void) { if (ticks < 30) ticks++; return TIMER_CONTINUE; }
+static int count(void) { clock_units++; return TIMER_CONTINUE; }
 
 int main(void)
 {
-    TRMesh path = {path_vertices,path_indices,PATH_VERTEX_COUNT,PATH_INDEX_COUNT,path_uvs,path_texture,path_fixed_vertices,path_fixed_uvs};
-    TRMesh player = {player_vertices,player_indices,PLAYER_VERTEX_COUNT,PLAYER_INDEX_COUNT,player_uvs,player_texture,player_fixed_vertices,player_fixed_uvs};
-    TRMesh jump_mesh = {jump_vertices,jump_indices,JUMP_VERTEX_COUNT,JUMP_INDEX_COUNT,jump_uvs,tree_texture,jump_fixed_vertices,jump_fixed_uvs};
-    TRMesh slide_mesh = {slide_vertices,slide_indices,SLIDE_VERTEX_COUNT,SLIDE_INDEX_COUNT,slide_uvs,tree_texture,slide_fixed_vertices,slide_fixed_uvs};
-    TRMesh trip_mesh = {trip_vertices,trip_indices,TRIP_VERTEX_COUNT,TRIP_INDEX_COUNT,trip_uvs,tree_texture,trip_fixed_vertices,trip_fixed_uvs};
-    TRMesh coin_mesh = {coin_vertices,coin_indices,COIN_VERTEX_COUNT,COIN_INDEX_COUNT,coin_uvs,path_texture,coin_fixed_vertices,coin_fixed_uvs};
-    TRMesh corner_left = {left_corner_vertices,left_corner_indices,LEFT_CORNER_VERTEX_COUNT,LEFT_CORNER_INDEX_COUNT,left_corner_uvs,path_texture,left_corner_fixed_vertices,left_corner_fixed_uvs};
-    TRMesh corner_right = {right_corner_vertices,right_corner_indices,RIGHT_CORNER_VERTEX_COUNT,RIGHT_CORNER_INDEX_COUNT,right_corner_uvs,path_texture,right_corner_fixed_vertices,right_corner_fixed_uvs};
-    TRMesh path_horizontal = {path_h_vertices,path_h_indices,PATH_H_VERTEX_COUNT,PATH_H_INDEX_COUNT,path_h_uvs,path_texture,path_h_fixed_vertices,path_h_fixed_uvs};
-    TRMesh corner_c_mesh = {corner_c_vertices,corner_c_indices,CORNER_C_VERTEX_COUNT,CORNER_C_INDEX_COUNT,corner_c_uvs,path_texture,corner_c_fixed_vertices,corner_c_fixed_uvs};
-    TRMesh corner_d_mesh = {corner_d_vertices,corner_d_indices,CORNER_D_VERTEX_COUNT,CORNER_D_INDEX_COUNT,corner_d_uvs,path_texture,corner_d_fixed_vertices,corner_d_fixed_uvs};
-    TRMesh jump_horizontal = {jump_h_vertices,jump_h_indices,JUMP_H_VERTEX_COUNT,JUMP_H_INDEX_COUNT,jump_h_uvs,tree_texture,jump_h_fixed_vertices,jump_h_fixed_uvs};
-    TRMesh slide_horizontal = {slide_h_vertices,slide_h_indices,SLIDE_H_VERTEX_COUNT,SLIDE_H_INDEX_COUNT,slide_h_uvs,tree_texture,slide_h_fixed_vertices,slide_h_fixed_uvs};
-    TRMesh trip_horizontal = {trip_h_vertices,trip_h_indices,TRIP_H_VERTEX_COUNT,TRIP_H_INDEX_COUNT,trip_h_uvs,tree_texture,trip_h_fixed_vertices,trip_h_fixed_uvs};
-    TRMesh hole_mesh = {hole_vertices,hole_indices,HOLE_VERTEX_COUNT,HOLE_INDEX_COUNT,hole_uvs,path_texture,hole_fixed_vertices,hole_fixed_uvs};
-    TRMesh hole_horizontal = {hole_h_vertices,hole_h_indices,HOLE_H_VERTEX_COUNT,HOLE_H_INDEX_COUNT,hole_h_uvs,path_texture,hole_h_fixed_vertices,hole_h_fixed_uvs};
-    TRMesh narrow_mesh = {narrow_vertices,narrow_indices,NARROW_VERTEX_COUNT,NARROW_INDEX_COUNT,narrow_uvs,path_texture,narrow_fixed_vertices,narrow_fixed_uvs};
-    TRMesh narrow_horizontal = {narrow_h_vertices,narrow_h_indices,NARROW_H_VERTEX_COUNT,NARROW_H_INDEX_COUNT,narrow_h_uvs,path_texture,narrow_h_fixed_vertices,narrow_h_fixed_uvs};
-    TRAssets assets = {{&path,&path_horizontal}, {&corner_left,&corner_right,&corner_c_mesh,&corner_d_mesh},
-        {&jump_mesh,&jump_horizontal}, {&slide_mesh,&slide_horizontal},
-        {&trip_mesh,&trip_horizontal}, &coin_mesh, &player,
-        {&hole_mesh,&hole_horizontal}, {&narrow_mesh,&narrow_horizontal}};
-    TRSession session;
-    tr_session_reset(&session, (int)rtc_ticks());
-    int timer = timer_configure(TIMER_ANY, 33333, GINT_CALL(tick));
+    /* Read the seed before loading, so that it does not depend on load time. */
+    int seed = (int)rtc_ticks();
+    const TRAssets *assets = tr_assets_load();
+    static TRSession session;
+    tr_session_reset(&session, seed);
+    int timer = timer_configure(TIMER_ANY, 1000000 / CLOCK_HZ, GINT_CALL(count));
     if (timer < 0) return 1;
-    /* dupdate switches VRAMs on CG50. Clear both buffers once; the scaled
-     * frame overwrites the entire interior on every subsequent update. */
+    /* Clear the border once; later frames only replace the interior. */
     dclear(C_BLACK);
     dupdate();
-    dclear(C_BLACK);
     timer_start(timer);
+
+    TRPose current, next, view;
+    tr_session_pose(&session, &current);
+    next = current;
+    TRInput input = {0};
+    uint32_t simulated = clock_units, drawn = simulated - FRAME_UNITS;
+    uint32_t second = simulated;
+    int frames = 0, rate = 0;
+    bool redraw = true, show_rate = false;
     int running = 1;
     while (running) {
-        if (!ticks) continue;
-        TRInput input = {0};
+        /* Collect presses until the next simulation step uses them. */
         key_event_t ev;
         while ((ev = pollevent()).type != KEYEV_NONE) {
             if (ev.type != KEYEV_DOWN) continue;
@@ -89,31 +60,61 @@ int main(void)
             if (ev.key == KEY_RIGHT) input.turn = 1;
             if (ev.key == KEY_EXE) input.restart = true;
             if (ev.key == KEY_F1) input.toggle_pause = !input.toggle_pause;
+            if (ev.key == KEY_F6) { show_rate = !show_rate; redraw = true; }
         }
         if (!running) break;
-        int elapsed = ticks;
-        ticks = 0;
-        input.tilt = keydown(KEY_6) - keydown(KEY_4);
-        if (!input.tilt) input.tilt = keydown(KEY_RIGHT) - keydown(KEY_LEFT);
-        tr_session_advance(&session, input, elapsed, (int)rtc_ticks());
-        tr_render_world(&frame, &session.course, &assets, session.runner.height, session.runner.sliding);
-        /* gint exposes a 396x224 RGB565 framebuffer, with no extra row stride. */
-        for (int y = 0; y < TR_HEIGHT; y++) {
-            TRPixelPair *row0 = (TRPixelPair *)&gint_vram[(y * 2 + 4) * DWIDTH + 6];
-            TRPixelPair *row1 = row0 + DWIDTH / 2;
-            for (int x = 0; x < TR_WIDTH; x++) {
-                uint32_t color = frame.pixels[y * TR_WIDTH + x];
-                uint32_t pair = color | (color << 16);
-                row0[x] = pair;
-                row1[x] = pair;
-            }
+
+        uint32_t now = clock_units;
+        int steps = (int)((now - simulated) / STEP_UNITS);
+        if (steps > 0) {
+            simulated += (uint32_t)steps * STEP_UNITS;
+            bool pressed = input.jump || input.slide || input.turn || input.restart ||
+                input.toggle_pause;
+            bool was_still = session.paused || session.runner.dead;
+            input.tilt = keydown(KEY_6) - keydown(KEY_4);
+            if (!input.tilt) input.tilt = keydown(KEY_RIGHT) - keydown(KEY_LEFT);
+            tr_session_advance(&session, input, steps > MAX_STEPS ? MAX_STEPS : steps,
+                (int)rtc_ticks());
+            tr_session_pose(&session, &current);
+            tr_session_predict(&session, input.tilt, &next);
+            input = (TRInput){0};
+            bool still = session.paused || session.runner.dead;
+            if (!still || !was_still || pressed) redraw = true;
         }
+
+        /* A paused or finished run only needs drawing when it changes. */
+        bool still = session.paused || session.runner.dead;
+        if ((still && !redraw) || now - drawn < FRAME_UNITS) {
+            sleep();
+            continue;
+        }
+        drawn = now;
+        redraw = false;
+        if (still) view = current;
+        else {
+            uint32_t since = now - simulated;
+            tr_pose_between(&current, &next,
+                since >= STEP_UNITS ? 1.0f : (float)since / STEP_UNITS, &view);
+        }
+        /* The previous frame is still being sent to the screen by DMA while
+         * this one is drawn. Wait for it only before touching VRAM again. */
+        tr_render_world(&frame, &session.course, assets, &view, session.runner.sliding);
+        dma_transfer_wait(0);
+        tr_present_scale(&frame, gint_vram);
         dprint(8, 6, C_WHITE, "SCORE %ld", (long)session.runner.score);
         dprint(8, 22, C_WHITE, "COINS %d", session.runner.coins);
+        if (show_rate) dprint(340, 6, C_WHITE, "FPS %d", rate);
         if (session.paused) dtext(150, 42, C_WHITE, "PAUSED - F1: RESUME");
         if (session.runner.dead) dtext(100, 42, C_WHITE, "GAME OVER - EXE: RESTART");
-        dupdate();
+        r61524_display(gint_vram, 0, DHEIGHT, R61524_DMA);
+        frames++;
+        if (now - second >= CLOCK_HZ) {
+            rate = (int)(frames * CLOCK_HZ / (now - second));
+            frames = 0;
+            second = now;
+        }
     }
+    dma_transfer_wait(0);
     timer_stop(timer);
     return 0;
 }
