@@ -32,6 +32,16 @@ The same temple scenery is used throughout.
 
 ## Renderer and display optimization
 
+The rasterizer now skips the empty prefix of each triangle row and stops at
+the end of its contiguous covered span. In fixed-clock emulator runs through
+the opening and first turn, recordings showed 57 changed frames in the first
+six seconds before the change and 70 afterwards, for both turn directions.
+This is roughly 9.5 versus 11.7 visible changes per second; GIF recording can
+merge frames, and the emulator is not a physical-device measurement. The
+rendered resolution is unchanged. The rasterizer output matched the previous
+version for 4,000 affine and 4,000 perspective test triangles and seven host
+scene snapshots. CPU cost and input timing still need real-device measurement.
+
 The flat temple-floor faces now use approximate perspective-correct texture
 mapping. The earlier affine mapping visibly distorted nearby paving stones.
 Other faces, including coins, retain their previous mapping. This applies to

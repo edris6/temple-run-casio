@@ -156,6 +156,13 @@ static void triangle(TRFramebuffer *fb, Projected a, Projected b, Projected c,
         v0 = av + vx*(left-a.x) + vy*(top-a.y);
     }
     int row0 = edge(a,b,left,top), row1 = edge(b,c,left,top), row2 = edge(c,a,left,top);
+    int ex0 = b.y-a.y, ex1 = c.y-b.y, ex2 = a.y-c.y;
+    int ey0 = a.x-b.x, ey1 = b.x-c.x, ey2 = c.x-a.x;
+    if (area < 0) {
+        row0 = -row0; row1 = -row1; row2 = -row2;
+        ex0 = -ex0; ex1 = -ex1; ex2 = -ex2;
+        ey0 = -ey0; ey1 = -ey1; ey2 = -ey2;
+    }
     /* Texture lookup uses the low 32 bits. Depth at covered pixels is bounded
      * by the projected vertices (plus small gradient-rounding error), so it
      * also fits in signed 32 bits. Unsigned wrapping keeps off-triangle
@@ -163,41 +170,47 @@ static void triangle(TRFramebuffer *fb, Projected a, Projected b, Projected c,
     uint32_t row_z = (uint32_t)z0, row_u = (uint32_t)u0, row_v = (uint32_t)v0;
     for (int y = top; y <= bottom; y++) {
         int e0 = row0, e1 = row1, e2 = row2;
-        uint32_t z = row_z, u = row_u, v = row_v;
+        int x = left;
+        /* The covered pixels in a triangle row form one contiguous span.
+         * Skip its empty prefix without interpolating depth and texture. */
+        while (x <= right && (e0 < 0 || e1 < 0 || e2 < 0)) {
+            e0 += ex0; e1 += ex1; e2 += ex2; x++;
+        }
+        uint32_t skipped = (uint32_t)(x-left);
+        uint32_t z = row_z + (uint32_t)zx*skipped;
+        uint32_t u = row_u + (uint32_t)ux*skipped;
+        uint32_t v = row_v + (uint32_t)vx*skipped;
         int64_t corrected_u = 0, corrected_v = 0, step_u = 0, step_v = 0;
         bool correction_started = false;
-        for (int x = left; x <= right; x++) {
-            if ((area > 0 && e0 >= 0 && e1 >= 0 && e2 >= 0) ||
-                (area < 0 && e0 <= 0 && e1 <= 0 && e2 <= 0)) {
-                int i = y * TR_WIDTH + x;
-                uint16_t depth = (uint16_t)((z & 0x80000000u) ? 1 :
-                    clampi((int)(z >> 8), 1, 65535));
-                if (depth > fb->depth[i]) {
-                    fb->depth[i] = depth;
-                    if (texture) {
-                        uint32_t tu = u, tv = v;
-                        if (perspective && z && !(z & 0x80000000u)) {
-                            if (!correction_started) {
-                                /* On a horizontal floor with a level camera,
-                                 * depth is approximately constant across a row. */
-                                corrected_u = signed_u32(u)*65536 / z;
-                                corrected_v = signed_u32(v)*65536 / z;
-                                step_u = ux*65536 / z;
-                                step_v = vx*65536 / z;
-                                correction_started = true;
-                            }
-                            tu = (uint32_t)corrected_u;
-                            tv = (uint32_t)corrected_v;
+        for (; x <= right && e0 >= 0 && e1 >= 0 && e2 >= 0; x++) {
+            int i = y * TR_WIDTH + x;
+            uint16_t depth = (uint16_t)((z & 0x80000000u) ? 1 :
+                clampi((int)(z >> 8), 1, 65535));
+            if (depth > fb->depth[i]) {
+                fb->depth[i] = depth;
+                if (texture) {
+                    uint32_t tu = u, tv = v;
+                    if (perspective && z && !(z & 0x80000000u)) {
+                        if (!correction_started) {
+                            /* On a horizontal floor with a level camera,
+                             * depth is approximately constant across a row. */
+                            corrected_u = signed_u32(u)*65536 / z;
+                            corrected_v = signed_u32(v)*65536 / z;
+                            step_u = ux*65536 / z;
+                            step_v = vx*65536 / z;
+                            correction_started = true;
                         }
-                        fb->pixels[i] = texture[((tv >> 16) & 127u) * 128 + ((tu >> 16) & 127u)];
-                    } else fb->pixels[i] = color;
-                }
+                        tu = (uint32_t)corrected_u;
+                        tv = (uint32_t)corrected_v;
+                    }
+                    fb->pixels[i] = texture[((tv >> 16) & 127u) * 128 + ((tu >> 16) & 127u)];
+                } else fb->pixels[i] = color;
             }
-            e0 += b.y-a.y; e1 += c.y-b.y; e2 += a.y-c.y;
+            e0 += ex0; e1 += ex1; e2 += ex2;
             z += (uint32_t)zx; u += (uint32_t)ux; v += (uint32_t)vx;
             if (correction_started) { corrected_u += step_u; corrected_v += step_v; }
         }
-        row0 -= b.x-a.x; row1 -= c.x-b.x; row2 -= a.x-c.x;
+        row0 += ey0; row1 += ey1; row2 += ey2;
         row_z += (uint32_t)zy; row_u += (uint32_t)uy; row_v += (uint32_t)vy;
     }
 }

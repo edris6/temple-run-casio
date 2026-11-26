@@ -114,6 +114,28 @@ int main(void)
     assert(is_floor_face(&floor_mesh, 1, 0, 1, 2));
     assert(!is_floor_face(&floor_mesh, 5, 0, 1, 2)); /* coin */
     assert(!is_floor_face(&floor_mesh, 1, 0, 1, 3)); /* wall */
+    state = 4982731;
+    uint64_t perspective_hash = 1469598103934665603ULL;
+    for (int frame = 0; frame < 200; frame++) {
+        clear_frame(&fb);
+        for (int i = 0; i < 20; i++) {
+            Projected p[3];
+            for (int j = 0; j < 3; j++) {
+                p[j].x = (int)(next_value() % 700) - 250;
+                p[j].y = (int)(next_value() % 500) - 200;
+                p[j].inv_z = (int)(next_value() % 5500000) + 1;
+                p[j].u = (int)(next_value() % 24000000) - 12000000;
+                p[j].v = (int)(next_value() % 24000000) - 12000000;
+            }
+            triangle(&fb, p[0], p[1], p[2], 0x5544, texture, true);
+        }
+        for (int i = 0; i < TR_WIDTH * TR_HEIGHT; i++) {
+            perspective_hash ^= fb.pixels[i]; perspective_hash *= 1099511628211ULL;
+            perspective_hash ^= fb.depth[i]; perspective_hash *= 1099511628211ULL;
+        }
+    }
+    /* Reference output from the rasterizer before span optimization. */
+    assert(perspective_hash == 0xc0187b6fe3f5f490ULL);
     puts("Rasterizer regression checks passed");
     return 0;
 }
