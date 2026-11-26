@@ -75,10 +75,11 @@ Original lightmaps and full Unity material behavior are not used.
 | Stage | File | What it does |
 | --- | --- | --- |
 | Pacing | `cg_main.c` | Simulates at 30 Hz, draws up to 60 frames a second, and places each frame between the current step and the predicted next one |
-| Scene and vertices | `renderer.c` | Picks nearby tiles, skips meshes outside the view, transforms each distinct position once in integer arithmetic, clips at the near plane |
-| Triangle setup | `raster.c` | Rejects hidden and back-facing triangles, picks a 128, 64 or 32 texel texture level, and fills triangles of a few pixels with one sample |
+| Scene and vertices | `renderer.c` | Picks nearby tiles, skips meshes outside the view, transforms each distinct position once in integer arithmetic, clips at the near plane, and lists up to 2304 visible screen triangles |
+| Strips | `renderer.c`, `cg_main.c` | Draws the 396×224 frame as 14 strips of 16 rows, bottom first, each from the listed triangles that touch it |
+| Triangle setup | `raster.c` | Picks a 128, 64 or 32 texel texture level, and fills triangles of a few pixels with one sample |
 | Pixel rows | `sh4.S`, `rows.c` | Depth test and texture lookup in assembly, with a C equivalent |
-| Screen | `present.c`, `sh4.S` | Doubles the 192×108 frame into video RAM, which DMA sends while the next frame is drawn |
+| Screen | `present.c`, `sh4.S` | Packs each strip's colours into video RAM; DMA sends the finished frame while the next is prepared |
 
 The temple floor is texture-mapped with perspective correction (the camera is
 level, so one depth serves a whole screen row). Other surfaces use affine
@@ -87,8 +88,12 @@ except in the assembled junction. The CG50 has no FPU or divide instruction:
 the renderer uses reciprocal tables, while the game logic still uses software
 floating point.
 
+A whole frame with its depth values needs about 346 kB, which does not fit
+beside the assets, so only one 25 kB strip is held at a time. The strip height
+is `TR_BAND_HEIGHT` in `raster.h`.
+
 `assets.c` copies meshes and textures from the add-in's ROM into RAM at startup
-and builds the smaller texture levels. Static RAM use is about 376 kB of the
+and builds the smaller texture levels. Static RAM use is about 415 kB of the
 491 kB available to the add-in.
 
 ## Build
@@ -124,8 +129,8 @@ docker run --platform linux/amd64 --network none --rm \
 With a cable, Casio add-ins normally go in storage memory; back up important
 data first. Treat this output as a diagnostic build, not a release.
 
-For a host-rendered still, after generating the asset headers (the optional
-number runs that many simulation steps first, without input):
+For a 396×224 host-rendered still, after generating the asset headers (the
+optional number runs that many simulation steps first, without input):
 
 ```sh
 make build/preview

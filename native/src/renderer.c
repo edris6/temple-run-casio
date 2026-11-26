@@ -9,19 +9,29 @@
  * a pixel. The camera looks slightly down from behind the runner. */
 #define NEAR_Z 48
 #define FAR_Z 6400
-#define FOCAL (105 * 16)
+#define FOCAL_PIXELS 210
+#define HORIZON_ROW 90 /* the screen row level with the camera */
+#define FOCAL (FOCAL_PIXELS * 16)
 #define CENTRE_X (TR_WIDTH / 2 * 16)
-#define CENTRE_Y (43 * 16)
+#define CENTRE_Y (HORIZON_ROW * 16)
 #define SCREEN_RIGHT (TR_WIDTH * 16 - CENTRE_X)
 #define SCREEN_BOTTOM (TR_HEIGHT * 16 - CENTRE_Y)
-#define GUARD 14000 /* projected vertices stay this close to the centre */
+#define GUARD 13000 /* projected vertices stay this close to the centre */
 #define PITCH_COS 3923 /* Q12 */
 #define PITCH_SIN 1177
 #define CAMERA_HEIGHT 208
 #define CAMERA_BACK 480
 #define FLOOR_Y (-144) /* prefab-local height of the temple floor */
 #define CLIP_LIMIT 12
-#define SKY_ROWS 43
+/* Lengths of the normals of the view's side, top and bottom planes, that is
+ * hypot(FOCAL_PIXELS, distance to that screen edge), rounded up. */
+#define SIDE_NORMAL 289
+#define TOP_NORMAL 229
+#define BOTTOM_NORMAL 250
+_Static_assert(FOCAL_PIXELS == 210 && TR_WIDTH == 396 && TR_HEIGHT == 224 &&
+    HORIZON_ROW == 90, "recompute the view plane normals");
+_Static_assert(CENTRE_X + GUARD <= TR_COORD_LIMIT, "projection exceeds the rasterizer");
+#define MATERIAL_LIMIT 32
 #define SKY 0x8d9a
 #define GROUND 0x3326
 
@@ -46,12 +56,29 @@ typedef struct {
 
 typedef struct { int32_t x, y, z, u, v; } ClipVertex;
 
+/* A triangle ready to draw. */
+typedef struct {
+    int16_t x[3], y[3];
+    int32_t z[3];
+    TRTexCoord uv[3];
+    uint16_t material;
+} Listed;
+_Static_assert((TR_HEIGHT + TR_BAND_HEIGHT - 1) / TR_BAND_HEIGHT <= 16,
+    "each strip needs a bit in scene_bands");
+
 /* Each position is transformed once per instance. The view-space copy is only
  * needed for clipping. */
 static Vertex vertex_cache[TR_MESH_VERTEX_LIMIT];
 static int16_t view_cache[TR_MESH_VERTEX_LIMIT][3];
 static int32_t inverse_depth[FAR_Z + 1]; /* 2^36 / depth */
 static int32_t floor_depth[TR_HEIGHT];   /* floor depth * 16 along each row */
+static Listed scene[TR_SCENE_TRIANGLES];
+/* One bit for each strip of TR_BAND_HEIGHT rows that a listed triangle
+ * touches. Kept apart so that each strip scans little memory. */
+static uint16_t scene_bands[TR_SCENE_TRIANGLES];
+static size_t scene_count;
+static TRMaterial materials[MATERIAL_LIMIT];
+static unsigned material_count;
 
 static int dir_x(int d) { return d == 2 ? 1 : d == 4 ? -1 : 0; }
 static int dir_z(int d) { return d == 1 ? 1 : d == 3 ? -1 : 0; }
@@ -145,8 +172,11 @@ static bool mesh_visible(const TRMesh *mesh, const Instance *instance)
     int32_t r = mesh->radius + 4; /* allow for rounding */
     if (depth + r < NEAR_Z || depth - r > FAR_Z) return false;
     /* Distances to the four sides of the view, scaled by the normals. */
-    if (side * 105 - 96 * depth > r * 143 || -side * 105 - 96 * depth > r * 143) return false;
-    return up * 105 - 43 * depth <= r * 114 && -up * 105 - 65 * depth <= r * 124;
+    int32_t across = side * FOCAL_PIXELS, above = up * FOCAL_PIXELS;
+    int32_t edge = TR_WIDTH / 2 * depth;
+    if (across - edge > r * SIDE_NORMAL || -across - edge > r * SIDE_NORMAL) return false;
+    return above - HORIZON_ROW * depth <= r * TOP_NORMAL &&
+        -above - (TR_HEIGHT - HORIZON_ROW) * depth <= r * BOTTOM_NORMAL;
 }
 
 static int32_t plane_distance(const ClipVertex *p, int plane)
@@ -189,10 +219,44 @@ static int clip_plane(const ClipVertex *in, int count, ClipVertex *out, int plan
     return n;
 }
 
+/* The bits of the strips that hold rows top to bottom - 1 (not empty). */
+static unsigned band_bits(int top, int bottom)
+{
+    return (2u << ((unsigned)(bottom - 1) / TR_BAND_HEIGHT)) -
+        (1u << ((unsigned)top / TR_BAND_HEIGHT));
+}
+
+/* Only a few combinations occur, so each is stored once. */
+static unsigned material_index(const TRMaterial *material)
+{
+    for (unsigned i = 0; i < material_count; i++) {
+        const TRMaterial *m = &materials[i];
+        if (m->texture == material->texture && m->floor_depth == material->floor_depth &&
+            m->color == material->color && m->cull_back == material->cull_back) return i;
+    }
+    if (material_count == MATERIAL_LIMIT) return MATERIAL_LIMIT - 1;
+    materials[material_count] = *material;
+    return material_count++;
+}
+
+static inline void list_triangle(const TRScreenVertex *a, const TRScreenVertex *b,
+    const TRScreenVertex *c, const TRTexCoord uv[3], unsigned material, bool cull)
+{
+    int top, bottom;
+    if (!tr_triangle_rows(a, b, c, cull, &top, &bottom)) return;
+    if (scene_count == TR_SCENE_TRIANGLES) return;
+    scene_bands[scene_count] = (uint16_t)band_bits(top, bottom);
+    Listed *out = &scene[scene_count++];
+    out->x[0] = (int16_t)a->x; out->y[0] = (int16_t)a->y; out->z[0] = a->z;
+    out->x[1] = (int16_t)b->x; out->y[1] = (int16_t)b->y; out->z[1] = b->z;
+    out->x[2] = (int16_t)c->x; out->y[2] = (int16_t)c->y; out->z[2] = c->z;
+    out->uv[0] = uv[0]; out->uv[1] = uv[1]; out->uv[2] = uv[2];
+    out->material = (uint16_t)material;
+}
+
 /* Clip in view space, so triangles spanning the near plane (especially the
  * floor under the camera) do not disappear or distort. */
-static void draw_clipped(TRFramebuffer *fb, const TRTriangle *triangle,
-    const TRMaterial *material)
+static void list_clipped(const TRTriangle *triangle, unsigned material, bool cull)
 {
     ClipVertex buffer[2][2 * CLIP_LIMIT], *in = buffer[0], *out = buffer[1];
     for (int i = 0; i < 3; i++) {
@@ -216,7 +280,7 @@ static void draw_clipped(TRFramebuffer *fb, const TRTriangle *triangle,
         TRTexCoord uv[3] = {{(int16_t)in[0].u, (int16_t)in[0].v},
             {(int16_t)in[i].u, (int16_t)in[i].v},
             {(int16_t)in[i + 1].u, (int16_t)in[i + 1].v}};
-        tr_raster_triangle(fb, &screen[0], &screen[i], &screen[i + 1], uv, material);
+        list_triangle(&screen[0], &screen[i], &screen[i + 1], uv, material, cull);
     }
 }
 
@@ -238,17 +302,21 @@ static bool junction_face(const TRMesh *mesh, const Instance *instance,
     return side >= 384;
 }
 
-static void draw_mesh(TRFramebuffer *fb, const TRMesh *mesh, const Instance *instance,
-    uint16_t base)
+static void list_mesh(const TRMesh *mesh, const Instance *instance, uint16_t base)
 {
     if (!mesh || !mesh->positions || !mesh->triangles ||
         mesh->position_count > TR_MESH_VERTEX_LIMIT) return;
     if (!instance->runner && !mesh_visible(mesh, instance)) return;
     transform_mesh(mesh, instance);
     /* The assembled junction shows some walls from behind. */
-    TRMaterial plain = {mesh->texture, NULL, base, !instance->junction_part};
-    TRMaterial floor = plain;
-    if (instance->floor) floor.floor_depth = floor_depth;
+    bool cull = !instance->junction_part;
+    TRMaterial plain = {mesh->texture, NULL, mesh->texture ? 0 : base, cull};
+    unsigned plain_index = material_index(&plain), floor_index = plain_index;
+    if (instance->floor) {
+        TRMaterial floor = plain;
+        floor.floor_depth = floor_depth;
+        floor_index = material_index(&floor);
+    }
     const TRTriangle *end = mesh->triangles + mesh->triangle_count;
     for (const TRTriangle *t = mesh->triangles; t != end; t++) {
         const Vertex *a = &vertex_cache[t->corner[0]], *b = &vertex_cache[t->corner[1]],
@@ -257,9 +325,9 @@ static void draw_mesh(TRFramebuffer *fb, const TRMesh *mesh, const Instance *ins
         unsigned any = a->flags | b->flags | c->flags;
         if (any & OUT_FAR) continue;
         if (!junction_face(mesh, instance, t)) continue;
-        const TRMaterial *material = t->floor ? &floor : &plain;
-        if (any & (OUT_NEAR | OUT_GUARD)) draw_clipped(fb, t, material);
-        else tr_raster_triangle(fb, &a->screen, &b->screen, &c->screen, t->uv, material);
+        unsigned material = t->floor ? floor_index : plain_index;
+        if (any & (OUT_NEAR | OUT_GUARD)) list_clipped(t, material, cull);
+        else list_triangle(&a->screen, &b->screen, &c->screen, t->uv, material, cull);
     }
 }
 
@@ -337,12 +405,17 @@ size_t tr_mesh_build(TRMesh *mesh, const TRMeshSource *source, const TRTexture *
 }
 
 /* Sky and ground, at depth zero so that any geometry covers them. */
-static void clear_frame(TRFramebuffer *fb)
+static void clear_target(const TRTarget *target)
 {
-    _Static_assert(TR_WIDTH % 8 == 0, "rows must be whole cache lines");
-    tr_fill(fb->pixels, SKY_ROWS * TR_WIDTH / 8, SKY);
-    tr_fill(fb->pixels + SKY_ROWS * TR_WIDTH,
-        (TR_HEIGHT - SKY_ROWS) * TR_WIDTH / 8, GROUND);
+    _Static_assert(TR_WIDTH * 2 % 8 == 0 && HORIZON_ROW % 2 == 0,
+        "an even number of rows must be whole cache lines");
+    int horizon = HORIZON_ROW < target->top ? target->top :
+        HORIZON_ROW > target->bottom ? target->bottom : HORIZON_ROW;
+    if (horizon > target->top)
+        tr_fill(target->pixels, (uint32_t)((horizon - target->top) * TR_WIDTH / 8), SKY);
+    if (target->bottom > horizon)
+        tr_fill(target->pixels + (horizon - target->top) * TR_WIDTH,
+            (uint32_t)((target->bottom - horizon) * TR_WIDTH / 8), GROUND);
 }
 
 static int corner_index(const TRTile *tile, int sign)
@@ -357,16 +430,15 @@ typedef struct {
     int32_t camera_x, camera_z;
 } Camera;
 
-static void draw_at(TRFramebuffer *fb, const TRMesh *mesh, const Camera *camera,
-    Instance instance, int x, int z, uint16_t color)
+static void list_at(const TRMesh *mesh, const Camera *camera, Instance instance,
+    int x, int z, uint16_t color)
 {
     instance.offset_x = x * 16 - camera->camera_x;
     instance.offset_z = z * 16 - camera->camera_z;
-    draw_mesh(fb, mesh, &instance, color);
+    list_mesh(mesh, &instance, color);
 }
 
-static void draw_tile(TRFramebuffer *fb, const TRTile *tile, const TRAssets *assets,
-    const Camera *camera)
+static void list_tile(const TRTile *tile, const TRAssets *assets, const Camera *camera)
 {
     int axis = tile->incoming == 1 || tile->incoming == 3 ? 0 : 1;
     Instance ground = camera->instance;
@@ -374,41 +446,42 @@ static void draw_tile(TRFramebuffer *fb, const TRTile *tile, const TRAssets *ass
     if (tile->junction) {
         ground.incoming = tile->incoming;
         ground.junction_part = 1;
-        draw_at(fb, assets->corner[corner_index(tile, -1)], camera, ground,
+        list_at(assets->corner[corner_index(tile, -1)], camera, ground,
             tile->x, tile->z, 0x7be9);
         ground.junction_part = 2;
-        draw_at(fb, assets->corner[corner_index(tile, 1)], camera, ground,
+        list_at(assets->corner[corner_index(tile, 1)], camera, ground,
             tile->x, tile->z, 0x7be9);
         ground.junction_part = 0;
         int exit_axis = tile->outgoing == 1 || tile->outgoing == 3 ? 0 : 1;
-        draw_at(fb, assets->path[exit_axis], camera, ground,
+        list_at(assets->path[exit_axis], camera, ground,
             tile->x - 60 * dir_x(tile->outgoing),
             tile->z - 60 * dir_z(tile->outgoing), 0x7be9);
     } else {
         const TRMesh *mesh = tile->turn ? assets->corner[corner_index(tile, tile->turn)] :
             tile->terrain == 1 ? assets->hole[axis] :
             tile->terrain == 2 ? assets->narrow[axis] : assets->path[axis];
-        draw_at(fb, mesh, camera, ground, tile->x, tile->z, 0x7be9);
+        list_at(mesh, camera, ground, tile->x, tile->z, 0x7be9);
     }
     if (tile->obstacle) {
         const TRMesh *obstacle = tile->obstacle == 1 ? assets->jump[axis] :
             tile->obstacle == 2 ? assets->slide[axis] : assets->trip[axis];
-        draw_at(fb, obstacle, camera, camera->instance, tile->x, tile->z, 0x7be9);
+        list_at(obstacle, camera, camera->instance, tile->x, tile->z, 0x7be9);
     }
     if (tile->coin_lane != 2) for (int j = 0; j < 6; j++) {
         if (tile->coins_collected & (1u << j)) continue;
         int along = -24 + j * 9, lane = 6 * tile->coin_lane;
         int x = tile->x + along * dir_x(tile->incoming) + lane * dir_z(tile->incoming);
         int z = tile->z + along * dir_z(tile->incoming) - lane * dir_x(tile->incoming);
-        draw_at(fb, assets->coin, camera, camera->instance, x, z, 0xfc00);
+        list_at(assets->coin, camera, camera->instance, x, z, 0xfc00);
     }
 }
 
-void tr_render_world(TRFramebuffer *fb, const TRCourse *course, const TRAssets *assets,
-    const TRPose *pose, bool sliding)
+void tr_scene_build(const TRCourse *course, const TRAssets *assets, const TRPose *pose,
+    bool sliding)
 {
     prepare_tables();
-    clear_frame(fb);
+    scene_count = 0;
+    material_count = 0;
     float view_x = pose->view_x, view_z = pose->view_z;
     if (view_x == 0 && view_z == 0) {
         view_x = (float)dir_x(course->heading); view_z = (float)dir_z(course->heading);
@@ -420,7 +493,7 @@ void tr_render_world(TRFramebuffer *fb, const TRCourse *course, const TRAssets *
     /* The runner is nearest, so drawing it first saves hidden floor pixels. */
     Instance runner = {.runner = true, .sliding = sliding,
         .height = (int32_t)(pose->height * 4.8f)};
-    draw_mesh(fb, assets->player, &runner, 0x9a63);
+    list_mesh(assets->player, &runner, 0x9a63);
 
     for (int i = 0; i < course->count; i++) {
         const TRTile *tile = &course->tiles[i];
@@ -429,6 +502,21 @@ void tr_render_world(TRFramebuffer *fb, const TRCourse *course, const TRAssets *
         int32_t side = (x * camera.instance.view_z - z * camera.instance.view_x) >> 12;
         if (ahead < -70 * 16 || ahead > 280 * 16 || side > 150 * 16 || side < -150 * 16)
             continue;
-        draw_tile(fb, tile, assets, &camera);
+        list_tile(tile, assets, &camera);
     }
 }
+
+void tr_scene_draw(const TRTarget *target)
+{
+    clear_target(target);
+    unsigned wanted = band_bits(target->top, target->bottom);
+    for (size_t i = 0; i < scene_count; i++) {
+        if (!(scene_bands[i] & wanted)) continue;
+        const Listed *t = &scene[i];
+        TRScreenVertex a = {t->x[0], t->y[0], t->z[0]}, b = {t->x[1], t->y[1], t->z[1]},
+            c = {t->x[2], t->y[2], t->z[2]};
+        tr_raster_visible(target, &a, &b, &c, t->uv, &materials[t->material]);
+    }
+}
+
+size_t tr_scene_size(void) { return scene_count; }

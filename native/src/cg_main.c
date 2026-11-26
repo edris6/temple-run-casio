@@ -18,9 +18,9 @@
 #define FRAME_UNITS (CLOCK_HZ / 60) /* draw at most 60 frames a second */
 #define MAX_STEPS 30
 
-_Static_assert(DWIDTH == TR_SCREEN_WIDTH && DHEIGHT == TR_SCREEN_HEIGHT,
-    "The presenter expects the full CG50 display");
-static TRFramebuffer frame;
+_Static_assert(DWIDTH == TR_WIDTH && DHEIGHT == TR_HEIGHT &&
+    TR_HEIGHT % TR_BAND_HEIGHT == 0, "frames fill the display in whole strips");
+static TRBand band;
 static volatile uint32_t clock_units;
 
 static int count(void) { clock_units++; return TIMER_CONTINUE; }
@@ -34,9 +34,6 @@ int main(void)
     tr_session_reset(&session, seed);
     int timer = timer_configure(TIMER_ANY, 1000000 / CLOCK_HZ, GINT_CALL(count));
     if (timer < 0) return 1;
-    /* Clear the border once; later frames only replace the interior. */
-    dclear(C_BLACK);
-    dupdate();
     timer_start(timer);
 
     TRPose current, next, view;
@@ -97,10 +94,16 @@ int main(void)
                 since >= STEP_UNITS ? 1.0f : (float)since / STEP_UNITS, &view);
         }
         /* The previous frame is still being sent to the screen by DMA while
-         * this one is drawn. Wait for it only before touching VRAM again. */
-        tr_render_world(&frame, &session.course, assets, &view, session.runner.sliding);
-        dma_transfer_wait(0);
-        tr_present_scale(&frame, gint_vram);
+         * this one is prepared. Wait for it only before touching VRAM again.
+         * The bottom strip is usually the busiest, so starting there gives the
+         * transfer the longest time to finish. */
+        tr_scene_build(&session.course, assets, &view, session.runner.sliding);
+        for (int bottom = TR_HEIGHT; bottom > 0; bottom -= TR_BAND_HEIGHT) {
+            TRTarget target = {band.pixels, bottom - TR_BAND_HEIGHT, bottom};
+            tr_scene_draw(&target);
+            dma_transfer_wait(0);
+            tr_present_rows(band.pixels, gint_vram + target.top * DWIDTH, TR_BAND_HEIGHT);
+        }
         dprint(8, 6, C_WHITE, "SCORE %ld", (long)session.runner.score);
         dprint(8, 22, C_WHITE, "COINS %d", session.runner.coins);
         if (show_rate) dprint(340, 6, C_WHITE, "FPS %d", rate);

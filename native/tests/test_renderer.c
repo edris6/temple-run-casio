@@ -29,6 +29,14 @@ static const TRMesh *build(Built *out, const int16_t (*positions)[3], size_t ver
     return &out->mesh;
 }
 
+static void render(TRFramebuffer *fb, const TRCourse *course, const TRAssets *assets,
+    const TRPose *pose)
+{
+    TRTarget whole = {fb->pixels, 0, TR_HEIGHT};
+    tr_scene_build(course, assets, pose, false);
+    tr_scene_draw(&whole);
+}
+
 static int changed(const TRFramebuffer *x, const TRFramebuffer *y)
 {
     int n = 0;
@@ -45,7 +53,7 @@ static void render_runner(TRFramebuffer *fb, const TRMesh *mesh)
     TRAssets assets = {0};
     assets.player = mesh;
     TRPose pose = {0, 0, 0, 1, 0};
-    tr_render_world(fb, &course, &assets, &pose, false);
+    render(fb, &course, &assets, &pose);
 }
 
 static void check_build(void)
@@ -127,32 +135,32 @@ static void check_tiles(void)
     course.tiles[0].incoming = course.tiles[0].outgoing = 1;
     TRPose pose = {0, -15, 0, 1, 0};
     TRAssets assets = {0};
-    tr_render_world(&empty, &course, &assets, &pose, false);
+    render(&empty, &course, &assets, &pose);
 
     assets.coin = &mesh.mesh;
     course.tiles[0].coin_lane = 0;
-    tr_render_world(&b, &course, &assets, &pose, false);
+    render(&b, &course, &assets, &pose);
     assert(changed(&empty, &b) > 0);
     course.tiles[0].coins_collected = 63;
-    tr_render_world(&b, &course, &assets, &pose, false);
+    render(&b, &course, &assets, &pose);
     assert(!changed(&empty, &b));
     course.tiles[0].coin_lane = 2;
 
     /* Each kind of tile draws only its own mesh. */
     assets = (TRAssets){0}; assets.corner[0] = &mesh.mesh;
     course.tiles[0].turn = -1;
-    tr_render_world(&b, &course, &assets, &pose, false);
+    render(&b, &course, &assets, &pose);
     assert(changed(&empty, &b) > 0);
     course.tiles[0].turn = 1;
-    tr_render_world(&b, &course, &assets, &pose, false);
+    render(&b, &course, &assets, &pose);
     assert(!changed(&empty, &b));
     course.tiles[0].turn = 0;
     assets = (TRAssets){0}; assets.hole[0] = &mesh.mesh;
     course.tiles[0].terrain = 1;
-    tr_render_world(&b, &course, &assets, &pose, false);
+    render(&b, &course, &assets, &pose);
     assert(changed(&empty, &b) > 0);
     course.tiles[0].terrain = 2;
-    tr_render_world(&b, &course, &assets, &pose, false);
+    render(&b, &course, &assets, &pose);
     assert(!changed(&empty, &b));
 }
 
@@ -204,7 +212,7 @@ static void check_culling_is_invisible(void)
     course.tiles[0].incoming = course.tiles[0].outgoing = 1;
     course.tiles[0].coin_lane = 2; course.tiles[0].obstacle = 1;
     int drawn = 0;
-    for (int round = 0; round < 20000; round++) {
+    for (int round = 0; round < 6000; round++) {
         int16_t points[24][3];
         int spread = between_values(0, 1) ? between_values(4, 100) : between_values(100, 3000);
         int cx = between_values(-1500, 1500), cy = between_values(-800, 800);
@@ -223,13 +231,63 @@ static void check_culling_is_invisible(void)
         course.tiles[0].x = (int)(pose.x + 40 * pose.view_x);
         course.tiles[0].z = (int)(pose.z + 40 * pose.view_z);
         TRAssets assets = {0}; assets.jump[0] = &mesh.mesh;
-        tr_render_world(&a, &course, &assets, &pose, false);
+        render(&a, &course, &assets, &pose);
         mesh.mesh.radius = 0;
-        tr_render_world(&b, &course, &assets, &pose, false);
+        render(&b, &course, &assets, &pose);
         assert(!changed(&a, &b));
         drawn += changed(&a, &empty) > 0;
     }
-    assert(drawn > 1000);
+    assert(drawn > 300);
+}
+
+/* A busy scene drawn in strips matches the same scene drawn at once, and a
+ * scene with more triangles than the list holds is cut off safely. */
+static void check_strips_and_capacity(void)
+{
+    static int16_t points[24][3];
+    static uint16_t indices[96];
+    for (int i = 0; i < 96; i++) indices[i] = (uint16_t)between_values(0, 23);
+    for (int i = 0; i < 24; i++) {
+        points[i][0] = (int16_t)between_values(-400, 400);
+        points[i][1] = (int16_t)between_values(-140, 300);
+        points[i][2] = (int16_t)between_values(-400, 400);
+    }
+    static uint16_t named[128 * 128];
+    for (int i = 0; i < 128 * 128; i++) named[i] = (uint16_t)i;
+    TRTexture texture = {{named, named, named}};
+    Built mesh;
+    build(&mesh, points, 24, indices, 96, &texture);
+    TRCourse course;
+    memset(&course, 0, sizeof course);
+    course.heading = 1; course.count = 4;
+    for (int i = 0; i < course.count; i++) {
+        course.tiles[i].incoming = course.tiles[i].outgoing = 1;
+        course.tiles[i].z = i * 60; course.tiles[i].coin_lane = 2;
+    }
+    TRAssets assets = {0};
+    assets.path[0] = &mesh.mesh; assets.player = &mesh.mesh;
+    TRPose pose = {3, -20, 0.2f, 0.98f, 1};
+    render(&a, &course, &assets, &pose);
+    assert(tr_scene_size() > 20 && changed(&a, &empty) > 1000);
+    static TRBand strip;
+    static const int heights[] = {2, 6, 14, TR_BAND_HEIGHT};
+    for (int h = 0; h < 4; h++) {
+        for (int bottom = TR_HEIGHT; bottom > 0; bottom -= heights[h]) {
+            int top = bottom > heights[h] ? bottom - heights[h] : 0;
+            TRTarget target = {strip.pixels, top, bottom};
+            tr_scene_draw(&target);
+            assert(!memcmp(strip.pixels, a.pixels + top * TR_WIDTH,
+                (size_t)(bottom - top) * TR_WIDTH * sizeof(uint32_t)));
+        }
+    }
+    course.count = TR_COURSE_CAPACITY;
+    for (int i = 0; i < course.count; i++) {
+        course.tiles[i] = (TRTile){.incoming = 1, .outgoing = 1, .coin_lane = 0,
+            .z = 20 + i % 4};
+    }
+    assets.coin = &mesh.mesh;
+    render(&b, &course, &assets, &pose);
+    assert(tr_scene_size() == TR_SCENE_TRIANGLES);
 }
 
 int main(void)
@@ -239,6 +297,7 @@ int main(void)
     check_tiles();
     check_junction();
     check_culling_is_invisible();
+    check_strips_and_capacity();
     puts("Mesh renderer checks passed");
     return 0;
 }

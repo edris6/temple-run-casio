@@ -56,17 +56,24 @@ static inline Edge edge_at(const TRScreenVertex *top, const TRScreenVertex *bott
     return e;
 }
 
-void tr_raster_visible(TRFramebuffer *fb, const TRScreenVertex *a,
+void tr_raster_visible(const TRTarget *target, const TRScreenVertex *a,
     const TRScreenVertex *b, const TRScreenVertex *c, const TRTexCoord uv[3],
     const TRMaterial *material)
 {
-    /* The rows and columns whose pixel centres the bounding box holds. */
+    /* The rows and columns of the screen whose pixel centres the bounding box
+     * holds. The target's share of the rows is taken later, so that the choice
+     * below does not depend on how the screen is split. */
     int first = (tr_min3(a->y, b->y, c->y) + 7) >> 4;
     int end = (tr_max3(a->y, b->y, c->y) + 7) >> 4;
     if (first < 0) first = 0;
     if (end > TR_HEIGHT) end = TR_HEIGHT;
     int columns = ((tr_max3(a->x, b->x, c->x) + 7) >> 4) -
         ((tr_min3(a->x, b->x, c->x) + 7) >> 4);
+
+    int rows_on_screen = end - first;
+    if (first < target->top) first = target->top;
+    if (end > target->bottom) end = target->bottom;
+    if (first >= end) return;
 
     int32_t abx = b->x - a->x, aby = b->y - a->y;
     int32_t acx = c->x - a->x, acy = c->y - a->y;
@@ -88,7 +95,7 @@ void tr_raster_visible(TRFramebuffer *fb, const TRScreenVertex *a,
     const uint16_t *texels = NULL;
     uint32_t v_shift = 0, u_mask = 0, v_mask = 0;
 
-    if ((end - first) * columns <= TINY_PIXELS) {
+    if (rows_on_screen * columns <= TINY_PIXELS) {
         /* Not worth interpolating: take one sample near the middle. */
         row_z = (uint32_t)((a->z >> 2) + (b->z >> 2) + (c->z >> 1));
         if (texture) {
@@ -175,7 +182,7 @@ void tr_raster_visible(TRFramebuffer *fb, const TRScreenVertex *a,
 #undef SORT
 
     TRRows rows = {
-        .line = &fb->pixels[first * TR_WIDTH],
+        .line = &target->pixels[(first - target->top) * TR_WIDTH],
         .z = row_z, .zx = zx, .zy = zy,
         .u = row_u, .ux = ux, .uy = uy,
         .v = row_v, .vx = vx, .vy = vy,

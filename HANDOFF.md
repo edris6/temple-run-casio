@@ -30,30 +30,33 @@ the emulator was exercised through the first junction in both directions, but
 the complete obstacle sequence still needs an emulator and real-device playtest.
 The same temple scenery is used throughout.
 
-## Performance work (November 2026)
+## Performance and resolution (November 2026)
 
-Emulator results, comparing commit `4ee6a4b` with the optimised renderer.
-Both used the fx-CG50 model, `--timing realistic` and a fixed clock.
+Emulator results for three builds: the original renderer (`4ee6a4b`, 192×108),
+the optimised renderer (`665c74e`, 192×108) and the current full-screen one
+(396×224, about 4.3 times as many pixels). All used the fx-CG50 model,
+`--timing realistic` and a fixed clock.
 
-| Measurement | Before | After |
-| --- | --- | --- |
-| Scripted play, about 28 s: average frames per second | 12.9 | 57.4 |
-| Scripted play: median / worst frame time | 74.5 / 105 ms | 16.9 / 23.3 ms |
-| 600 identical game states, drawn back to back: average frames per second | 12.0 | 55.8 |
-| Same run: instructions per frame | 9.7 million | 1.9 million |
+| Measurement | Original | Optimised, 192×108 | Current, 396×224 |
+| --- | --- | --- | --- |
+| Scripted play, about 28 s: average frames per second | 12.9 | 57.4 | 27.1 |
+| Scripted play: median / worst frame time, ms | 74.5 / 105 | 16.9 / 23.3 | 35.6 / 50.1 |
+| 600 identical game states, drawn back to back: frames per second | 12.0 | 55.8 | 25.0 |
+| Same run: instructions per frame, millions | 9.7 | 1.9 | 4.3 |
+| Same run with an assumed cache cost: frames per second | 11.3 | 46.4 | 21.9 |
 
 The emulator charges one cycle per instruction plus estimates for uncached
 memory and screen DMA. It has **no model of caches, pipeline or multiply
-latency**, so these are not calculator frame rates. A separate rough estimate
-added an assumed 32 kB, 4-way cache with 30 cycles per miss and write-back; it
-gave 11.3 before and 46.4 after. Treat both as relative evidence until F6 has
-been read on an fx-CG50.
+latency**, so these are not calculator frame rates. The last row comes from a
+separate rough estimate with an assumed 32 kB, 4-way cache costing 30 cycles
+per miss and write-back. Treat everything as relative evidence until F6 has been
+read on an fx-CG50.
 
-Where the time went before, and what changed:
+The optimised renderer fixed these costs in the original:
 
 - `dupdate()` blocked for the whole screen transfer, about 11 ms, because gint
   uses a single video buffer unless a second is set. The transfer now runs by
-  DMA while the next frame is drawn; the program waits only before writing
+  DMA while the next frame is prepared; the program waits only before writing
   video RAM again.
 - 64-bit software division in the rasterizer took about 16% of instructions.
   It now uses small reciprocal tables.
@@ -62,37 +65,52 @@ Where the time went before, and what changed:
 - Back faces are culled (except in the assembled junction), meshes outside the
   view are skipped, equal positions are transformed once, and triangles whose
   bounding box holds at most four pixel centres take one texture sample.
-- Pixel rows, the screen clear and the 2× upscale are in SH-4 assembly.
+- Pixel rows, the screen clear and the screen copy are in SH-4 assembly.
 - Meshes and textures are copied to RAM, and distant surfaces use smaller
   texture levels. These and `movca.l` in the clear aim at real-hardware memory
   costs that the emulator cannot show.
 - The 30 Hz simulation is unchanged. Frames are placed between the current
   step and a prediction of the next, so motion advances on every frame.
 
-Visible differences: distant textures are smoother and lose some fine detail
-(for example the thin red trim on far walls), and silhouettes differ by single
-pixels because sampling now uses pixel centres. Level thresholds are in
-`raster.c`.
+### Full resolution
+
+The view is framed as before, with the former black border now filled. A frame
+is transformed once into a triangle list, then drawn in 16-row strips. Tests
+check that strips give exactly the pixels and depths of drawing the frame at
+once. The most triangles seen in a frame was 1926 (60 course seeds), against a
+list size of 2304; any excess is silently left out.
+
+Strip height trades repeated triangle setup against cache use. In the 600-state
+run, 56-row strips gave 28.7 frames per second in the emulator and 20.9 with
+the cache estimate; 16-row strips gave 25.0 and 21.9, and leave about 60 kB
+more RAM free. 16 was chosen for the real calculator's cache; compare both
+with F6 if speed matters. Drawing two strips before the first wait for the
+screen gained about 3% in the emulator and nothing in the estimate, so it was
+not kept.
+
+The 128-texel textures now look blocky near the camera. Textures twice the size
+would not fit in the remaining RAM.
 
 Verification: host tests also pass under AddressSanitizer and
-UndefinedBehaviorSanitizer. The check add-in matched assembly and C results in
-the emulator, and failed when bugs were deliberately planted in the assembly.
-Over the 600-state run, colour and depth of every frame hashed identically in
-the calculator build and the host build. The benchmark add-in, frame-logging
-emulator patch and analysis scripts were temporary and are not in the
-repository.
+UndefinedBehaviorSanitizer, and fail when bugs are planted in copies of the
+code. The check add-in matched assembly and C results in the emulator, and
+failed with bugs planted in the assembly. Over the 600-state run, colour and
+depth of every strip hashed identically in the calculator build and the host
+build. The benchmark add-in, frame-logging emulator patch and analysis scripts
+were temporary and are not in the repository.
 
 Not done: CPU overclocking (gint's `clock_set_speed`) is not used, because it
-affects battery life and hardware margins. If real hardware is still too slow,
-that is one option; further candidates are drawing in screen bands to reduce
-cache misses and writing video RAM through the cache.
+affects battery life and hardware margins. If real hardware is too slow, that
+is one option; others are writing video RAM through the cache, keeping triangle
+setup between strips, or returning to a lower resolution.
 
 ## Current state
 
 - Imported original meshes are transformed into fixed-point coordinates by the
-  converter. The renderer uses a 192×108 internal framebuffer, scaled 2× to
-  the screen. Its closer camera retains the reference's downward pitch while
-  making the runner easier to see.
+  converter. The renderer draws at the full 396×224. Its closer camera retains
+  the reference's downward pitch while making the runner easier to see.
+- Short horizontal dashes appear where the floor meets the planted edging. The
+  192×108 build shows them too; the cause has not been investigated.
 - Left/right move sideways on straight paths and request a turn near a corner;
   up jumps, down slides, 4/6 also move sideways, F1 pauses, F6 shows the frame
   rate and EXIT quits.

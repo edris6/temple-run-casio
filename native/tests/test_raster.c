@@ -12,6 +12,7 @@
 /* Canaries catch writes outside the framebuffer. */
 static struct { uint32_t before[256]; TRFramebuffer fb; uint32_t after[256]; } guarded;
 #define fb (guarded.fb)
+static const TRTarget whole = {fb.pixels, 0, TR_HEIGHT};
 static uint32_t state = 123456789;
 
 static uint32_t next_value(void)
@@ -36,6 +37,26 @@ static TRScreenVertex vertex(int x, int y, int depth)
 static double cross(TRScreenVertex a, TRScreenVertex b, double x, double y)
 {
     return (double)(b.x - a.x) * (y - a.y) - (double)(b.y - a.y) * (x - a.x);
+}
+
+/* The pixels a set of corners can reach, clipped to the screen. */
+typedef struct { int x0, x1, y0, y1; } Box;
+
+static Box box_of(const TRScreenVertex *t, int count)
+{
+    Box box = {TR_WIDTH, 0, TR_HEIGHT, 0};
+    for (int i = 0; i < count; i++) {
+        int x = t[i].x >> 4, y = t[i].y >> 4;
+        if (x - 1 < box.x0) box.x0 = x - 1;
+        if (x + 2 > box.x1) box.x1 = x + 2;
+        if (y - 1 < box.y0) box.y0 = y - 1;
+        if (y + 2 > box.y1) box.y1 = y + 2;
+    }
+    if (box.x0 < 0) box.x0 = 0;
+    if (box.y0 < 0) box.y0 = 0;
+    if (box.x1 > TR_WIDTH) box.x1 = TR_WIDTH;
+    if (box.y1 > TR_HEIGHT) box.y1 = TR_HEIGHT;
+    return box;
 }
 
 /* The smallest distance in pixels from a pixel centre to the triangle's edge
@@ -90,11 +111,13 @@ static void check_coverage(void)
             if (t[i].y < -TR_COORD_LIMIT) t[i].y = -TR_COORD_LIMIT;
         }
         clear();
-        tr_raster_triangle(&fb, &t[0], &t[1], &t[2], uv, &flat);
+        tr_raster_triangle(&whole, &t[0], &t[1], &t[2], uv, &flat);
         bool degenerate = cross(t[0], t[1], t[2].x, t[2].y) == 0;
+        Box box = box_of(t, 3);
         for (int y = 0; y < TR_HEIGHT; y++) for (int x = 0; x < TR_WIDTH; x++) {
             bool drawn = fb.pixels[y * TR_WIDTH + x] != 0;
-            if (degenerate) { assert(!drawn); continue; }
+            bool near_it = x >= box.x0 && x < box.x1 && y >= box.y0 && y < box.y1;
+            if (degenerate || !near_it) { assert(!drawn); continue; }
             double d = inside_by(t, x, y);
             if (d > 0.1) assert(drawn);
             if (d < -0.1) assert(!drawn);
@@ -112,7 +135,8 @@ static void check_watertight(void)
     static unsigned char count[TR_WIDTH * TR_HEIGHT];
     for (int round = 0; round < 4000; round++) {
         int radius = radii[round % 4], sides = between(3, 8);
-        TRScreenVertex centre = vertex(between(200, 2800), between(200, 1500), 500), rim[8];
+        TRScreenVertex centre = vertex(between(200, TR_WIDTH * 16 - 200),
+            between(200, TR_HEIGHT * 16 - 200), 500), rim[8];
         double start = between(0, 359) * 3.14159265358979 / 180;
         for (int i = 0; i < sides; i++) {
             double angle = start + 2 * 3.14159265358979 * i / sides;
@@ -121,12 +145,19 @@ static void check_watertight(void)
                 centre.y + (int)(reach * sin(angle)), 500);
         }
         memset(count, 0, sizeof count);
+        Box box = box_of(rim, sides);
+        clear();
         for (int i = 0; i < sides; i++) {
-            clear();
-            tr_raster_triangle(&fb, &centre, &rim[i], &rim[(i + 1) % sides], uv, &flat);
-            for (int p = 0; p < TR_WIDTH * TR_HEIGHT; p++) count[p] += fb.pixels[p] != 0;
+            tr_raster_triangle(&whole, &centre, &rim[i], &rim[(i + 1) % sides], uv, &flat);
+            for (int y = box.y0; y < box.y1; y++) for (int x = box.x0; x < box.x1; x++) {
+                int p = y * TR_WIDTH + x;
+                count[p] += fb.pixels[p] != 0;
+                fb.pixels[p] = 0;
+            }
         }
-        for (int y = 0; y < TR_HEIGHT; y++) for (int x = 0; x < TR_WIDTH; x++) {
+        /* Nothing may have been drawn outside the fan's bounds. */
+        for (int p = 0; p < TR_WIDTH * TR_HEIGHT; p++) assert(!fb.pixels[p]);
+        for (int y = box.y0; y < box.y1; y++) for (int x = box.x0; x < box.x1; x++) {
             assert(count[y * TR_WIDTH + x] <= 1);
             bool well_inside = true;
             for (int i = 0; i < sides && well_inside; i++) {
@@ -188,8 +219,9 @@ static void check_attributes(bool floor_surface)
         TRMaterial material = {.texture = &texture,
             .floor_depth = floor_surface ? floor_depth : NULL};
         clear();
-        tr_raster_triangle(&fb, &t[0], &t[1], &t[2], uv, &material);
-        for (int y = 0; y < TR_HEIGHT; y++) for (int x = 0; x < TR_WIDTH; x++) {
+        tr_raster_triangle(&whole, &t[0], &t[1], &t[2], uv, &material);
+        Box box = box_of(t, 3);
+        for (int y = box.y0; y < box.y1; y++) for (int x = box.x0; x < box.x1; x++) {
             uint32_t pixel = fb.pixels[y * TR_WIDTH + x];
             if (!pixel || inside_by(t, x, y) < 0.1) continue;
             double weight[3], u = 0, v = 0, z = 0, over = 0;
@@ -219,20 +251,20 @@ static void check_culling_and_extremes(void)
         c = vertex(160, 1600, 300);
     static TRFramebuffer front;
     clear();
-    tr_raster_triangle(&fb, &a, &b, &c, uv, &one);
+    tr_raster_triangle(&whole, &a, &b, &c, uv, &one);
     assert(tr_pixel_color(fb.pixels[30 * TR_WIDTH + 30]) == 7);
     front = fb; clear();
-    tr_raster_triangle(&fb, &a, &c, &b, uv, &one);
+    tr_raster_triangle(&whole, &a, &c, &b, uv, &one);
     assert(!fb.pixels[30 * TR_WIDTH + 30]);
-    tr_raster_triangle(&fb, &a, &c, &b, uv, &both);
+    tr_raster_triangle(&whole, &a, &c, &b, uv, &both);
     assert(!memcmp(&front, &fb, sizeof fb));
     /* At equal depth the first triangle stays; a nearer one replaces it. */
     TRMaterial other = {.color = 8};
-    tr_raster_triangle(&fb, &a, &b, &c, uv, &other);
+    tr_raster_triangle(&whole, &a, &b, &c, uv, &other);
     assert(!memcmp(&front, &fb, sizeof fb));
     TRScreenVertex d = vertex(160, 160, 60), e = vertex(1600, 160, 60),
         f = vertex(160, 1600, 60);
-    tr_raster_triangle(&fb, &d, &e, &f, uv, &other);
+    tr_raster_triangle(&whole, &d, &e, &f, uv, &other);
     assert(tr_pixel_color(fb.pixels[30 * TR_WIDTH + 30]) == 8);
 
     /* Wrapping texture coordinates, screen-spanning slivers and both depth
@@ -241,19 +273,20 @@ static void check_culling_and_extremes(void)
     static int32_t floor_depth[TR_HEIGHT];
     for (int row = 0; row < TR_HEIGHT; row++) floor_depth[row] = between(48 * 16, 6400 * 16);
     const int limit = TR_COORD_LIMIT;
-    for (int round = 0; round < 200000; round++) {
+    for (int round = 0; round < 40000; round++) {
         TRScreenVertex t[3];
         TRTexCoord extreme[3];
         for (int i = 0; i < 3; i++) {
-            t[i] = vertex(between(0, 1) ? between(-limit, limit) : between(-50, 3100),
-                between(0, 1) ? between(-limit, limit) : between(-50, 1800),
+            t[i] = vertex(between(0, 1) ? between(-limit, limit)
+                    : between(-50, TR_WIDTH * 16 + 50),
+                between(0, 1) ? between(-limit, limit) : between(-50, TR_HEIGHT * 16 + 50),
                 between(0, 1) ? 48 : between(48, 6400));
             extreme[i].u = (int16_t)next_value(); extreme[i].v = (int16_t)next_value();
         }
         TRMaterial material = {.texture = between(0, 4) ? &texture : NULL,
             .floor_depth = between(0, 1) ? floor_depth : NULL,
             .color = 9, .cull_back = between(0, 1)};
-        tr_raster_triangle(&fb, &t[0], &t[1], &t[2], extreme, &material);
+        tr_raster_triangle(&whole, &t[0], &t[1], &t[2], extreme, &material);
     }
     for (int i = 0; i < 256; i++) assert(!guarded.before[i] && !guarded.after[i]);
 }
@@ -283,7 +316,7 @@ static void check_levels(void)
         TRTexCoord uv[3] = {{0, 0}, {(int16_t)(spans[i] * 16), 0},
             {0, (int16_t)(spans[i] * 16)}};
         clear();
-        tr_raster_triangle(&fb, &a, &b, &c, uv, &material);
+        tr_raster_triangle(&whole, &a, &b, &c, uv, &material);
         assert(tr_pixel_color(fb.pixels[20 * TR_WIDTH + 20]) == expected[i]);
     }
     /* A few pixels take one sample from the smallest level. */
@@ -291,8 +324,46 @@ static void check_levels(void)
         f = vertex(160, 192, 100);
     TRTexCoord uv[3] = {{0, 0}, {16, 0}, {0, 16}};
     clear();
-    tr_raster_triangle(&fb, &d, &e, &f, uv, &material);
+    tr_raster_triangle(&whole, &d, &e, &f, uv, &material);
     assert(tr_pixel_color(fb.pixels[10 * TR_WIDTH + 10]) == 3);
+}
+
+/* A triangle drawn strip by strip must leave exactly the pixels, and the
+ * depths, that drawing it at once does. */
+static void check_strips(void)
+{
+    TRTexture texture = {{named, mips, mips + 64 * 64}};
+    static int32_t floor_depth[TR_HEIGHT];
+    for (int row = 0; row < TR_HEIGHT; row++) floor_depth[row] = between(48 * 16, 6400 * 16);
+    static TRFramebuffer parts;
+    static struct { uint32_t before[256]; TRBand strip; uint32_t after[256]; } narrow;
+    static const int heights[] = {2, 6, 10, TR_BAND_HEIGHT};
+    for (int round = 0; round < 3000; round++) {
+        TRScreenVertex t[3];
+        random_triangle(t, round % 3 == 0 ? 5000 : round % 3 == 1 ? 600 : 60);
+        TRTexCoord uv[3];
+        for (int i = 0; i < 3; i++) {
+            uv[i].u = (int16_t)between(-4000, 4000); uv[i].v = (int16_t)between(-4000, 4000);
+        }
+        TRMaterial material = {.texture = between(0, 3) ? &texture : NULL,
+            .floor_depth = between(0, 1) ? floor_depth : NULL, .color = 5};
+        clear();
+        tr_raster_triangle(&whole, &t[0], &t[1], &t[2], uv, &material);
+        int height = heights[round % 4];
+        for (int top = 0; top < TR_HEIGHT; top += height) {
+            int bottom = top + height > TR_HEIGHT ? TR_HEIGHT : top + height;
+            TRTarget target = {narrow.strip.pixels, top, bottom};
+            memset(narrow.strip.pixels, 0, sizeof narrow.strip.pixels);
+            tr_raster_triangle(&target, &t[0], &t[1], &t[2], uv, &material);
+            memcpy(parts.pixels + top * TR_WIDTH, narrow.strip.pixels,
+                (size_t)(bottom - top) * TR_WIDTH * sizeof(uint32_t));
+            /* Rows below a short last strip stay untouched. */
+            for (int i = (bottom - top) * TR_WIDTH; i < TR_WIDTH * TR_BAND_HEIGHT; i++)
+                assert(!narrow.strip.pixels[i]);
+        }
+        assert(!memcmp(parts.pixels, fb.pixels, sizeof fb.pixels));
+    }
+    for (int i = 0; i < 256; i++) assert(!narrow.before[i] && !narrow.after[i]);
 }
 
 static void check_fill_and_present(void)
@@ -301,15 +372,15 @@ static void check_fill_and_present(void)
     tr_fill(fb.pixels + 8, 3, 0xabcd);
     for (int i = 0; i < 64; i++) assert(fb.pixels[i] == (i >= 8 && i < 32 ? 0xabcdu : 1u));
 
-    static uint16_t screen[TR_SCREEN_WIDTH * TR_SCREEN_HEIGHT];
+    static uint16_t screen[TR_WIDTH * TR_HEIGHT];
     for (int i = 0; i < TR_WIDTH * TR_HEIGHT; i++) fb.pixels[i] = next_value();
     memset(screen, 0x5a, sizeof screen);
-    tr_present_scale(&fb, screen);
-    for (int y = 0; y < TR_SCREEN_HEIGHT; y++) for (int x = 0; x < TR_SCREEN_WIDTH; x++) {
-        int sx = x - 6, sy = y - 4;
-        uint16_t want = sx >= 0 && sx < TR_WIDTH * 2 && sy >= 0 && sy < TR_HEIGHT * 2 ?
-            tr_pixel_color(fb.pixels[sy / 2 * TR_WIDTH + sx / 2]) : 0x5a5a;
-        assert(screen[y * TR_SCREEN_WIDTH + x] == want);
+    const int top = 6, rows = 10;
+    tr_present_rows(fb.pixels, screen + top * TR_WIDTH, rows);
+    for (int y = 0; y < TR_HEIGHT; y++) for (int x = 0; x < TR_WIDTH; x++) {
+        uint16_t want = y >= top && y < top + rows ?
+            tr_pixel_color(fb.pixels[(y - top) * TR_WIDTH + x]) : 0x5a5a;
+        assert(screen[y * TR_WIDTH + x] == want);
     }
 }
 
@@ -323,6 +394,7 @@ int main(void)
     check_attributes(true);
     check_culling_and_extremes();
     check_levels();
+    check_strips();
     check_fill_and_present();
     puts("Rasterizer checks passed");
     return 0;

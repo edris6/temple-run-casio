@@ -34,7 +34,7 @@
 #define FLOOR 76
 #define V_SHIFT 80
 
-#define WIDTH 192
+#define WIDTH 396
 
 ! value = (value * r13) >> shift, taking the low 32 bits of the 64-bit result.
 ! left is 32 - shift, right is -shift.
@@ -243,52 +243,29 @@ _tr_fill_sh:
     .size _tr_fill_sh, . - _tr_fill_sh
 
 
-! void tr_present_sh(const uint32_t *pixels, uint32_t *row)
-! Doubles 192x108 framebuffer words into 396-pixel screen rows: each low half
-! becomes a pixel pair, written to two consecutive screen rows.
+! void tr_present_sh(const uint32_t *pixels, uint32_t *screen, uint32_t groups)
+! Packs the colour halves (the low words) of 8 * groups framebuffer words into
+! video RAM, two pixels in each 32-bit write.
 
-#define HEIGHT 108
-#define SCREEN_BYTES (396 * 2)
-
-#define PAIR(offset) \
+#define PACK(offset) \
     mov.l   @r4+, r1 ; \
-    swap.w  r1, r2 ; \
+    mov.l   @r4+, r2 ; \
+    swap.w  r2, r2 ; \
     xtrct   r1, r2 ; \
-    mov.l   r2, @(offset, r5) ; \
-    mov.l   r2, @(offset, r6)
+    mov.l   r2, @(offset, r5)
 
     .align 5
     .global _tr_present_sh
     .type _tr_present_sh, @function
 _tr_present_sh:
-    mov.w   .Lscreen_bytes, r6
-    add     r5, r6              ! the second screen row
-    mov     #HEIGHT, r7
-    ! After one source row, skip the rest of both screen rows.
-    mov.w   .Lrow_gap, r3
-.Lpresent_row:
-    mov     #WIDTH / 8, r0
     .align 2
-.Lpresent_pixels:
-    PAIR(0)
-    PAIR(4)
-    PAIR(8)
-    PAIR(12)
-    PAIR(16)
-    PAIR(20)
-    PAIR(24)
-    PAIR(28)
-    dt      r0
-    add     #32, r5
-    bf/s    .Lpresent_pixels
-    add     #32, r6
-    add     r3, r5
-    dt      r7
-    bf/s    .Lpresent_row
-    add     r3, r6
+1:  PACK(0)
+    PACK(4)
+    PACK(8)
+    PACK(12)
+    dt      r6
+    bf/s    1b
+    add     #16, r5
     rts
     nop
-
-.Lscreen_bytes: .short SCREEN_BYTES
-.Lrow_gap:      .short 2 * SCREEN_BYTES - WIDTH * 4
     .size _tr_present_sh, . - _tr_present_sh

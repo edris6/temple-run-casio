@@ -44,7 +44,16 @@ typedef struct {
  * out-of-range indices are dropped. Returns the number of positions used. */
 size_t tr_mesh_build(TRMesh *mesh, const TRMeshSource *source, const TRTexture *texture,
     int16_t (*positions)[3], TRTriangle *triangles);
-void tr_render_world(TRFramebuffer *fb, const TRCourse *course, const TRAssets *assets,
-    const TRPose *pose, bool sliding);
+/* The most triangles one frame can show; any further ones are left out. */
+#define TR_SCENE_TRIANGLES 2304
+
+/* Transforms what the camera sees into a list of screen triangles. */
+void tr_scene_build(const TRCourse *course, const TRAssets *assets, const TRPose *pose,
+    bool sliding);
+/* Clears the target's rows to sky and ground and draws the listed triangles
+ * there. A frame may be drawn in any number of targets. */
+void tr_scene_draw(const TRTarget *target);
+/* The number of triangles listed by the last tr_scene_build. */
+size_t tr_scene_size(void);
 
 #endif

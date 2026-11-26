@@ -20,7 +20,7 @@ AT(line, 0); AT(rows, 4); AT(left_x, 8); AT(left_step, 12); AT(right_x, 16);
 AT(right_step, 20); AT(z, 24); AT(zx, 28); AT(zy, 32); AT(u, 36); AT(ux, 40);
 AT(uy, 44); AT(v, 48); AT(vx, 52); AT(vy, 56); AT(texels, 60); AT(v_mask, 64);
 AT(u_mask, 68); AT(color, 72); AT(floor_depth, 76); AT(v_shift, 80);
-_Static_assert(TR_WIDTH == 192, "sh4.S must match the frame width");
+_Static_assert(TR_WIDTH == 396, "sh4.S must match the frame width");
 #endif
 
 void tr_rows_c(TRRows *r)

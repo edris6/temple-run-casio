@@ -6,6 +6,7 @@
 #include <stdlib.h>
 
 static TRFramebuffer fb;
+static const TRTarget screen = {fb.pixels, 0, TR_HEIGHT};
 static TRSession session;
 
 int main(int argc, char **argv)
@@ -20,7 +21,8 @@ int main(int argc, char **argv)
         tr_session_advance(&session, (TRInput){0}, 1, 1);
     TRPose pose;
     tr_session_pose(&session, &pose);
-    tr_render_world(&fb, &session.course, assets, &pose, session.runner.sliding);
+    tr_scene_build(&session.course, assets, &pose, session.runner.sliding);
+    tr_scene_draw(&screen);
     FILE *f = fopen(argv[1], "wb");
     if (!f) { perror(argv[1]); return 1; }
     fprintf(f, "P6\n%d %d\n255\n", TR_WIDTH, TR_HEIGHT);
