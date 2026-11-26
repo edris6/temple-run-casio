@@ -96,6 +96,7 @@ Original lightmaps and full Unity material behavior are not used.
 | Scene and vertices | `renderer.c` | Picks nearby tiles, skips meshes outside the view, transforms each distinct position once in integer arithmetic, clips at the near plane, and lists up to 2304 visible screen triangles |
 | Strips | `renderer.c`, `cg_main.c` | Draws the 396×224 frame as 14 strips of 16 rows, bottom first, each from the listed triangles that touch it |
 | Triangle setup | `raster.c` | Picks a 128, 64 or 32 texel texture level, and fills triangles of a few pixels with one sample |
+| Gradients | `sh4.S`, `rows.c` | Solves how depth and texture coordinates change across a triangle, in assembly with a C equivalent |
 | Pixel rows | `sh4.S`, `rows.c` | Depth test and texture lookup in assembly, with a C equivalent |
 | Screen | `present.c`, `sh4.S` | Packs each strip's colours into video RAM; DMA sends the finished frame while the next is prepared |
 
@@ -163,9 +164,9 @@ references for coverage, shared edges, depth and texture coordinates. From the
 project root, `python3 -m unittest discover -s tests -v` also checks the asset
 converters against synthetic fixtures.
 
-The host tests run the C forms of the pixel loops. To compare them with the
-assembly on the calculator (or an emulator), build the check add-in, run
-`TRCHECK.g3a`, and expect three `OK` lines. It contains no game assets.
+The host tests run the C forms of the assembly routines. To compare them with
+the assembly on the calculator (or an emulator), build the check add-in, run
+`TRCHECK.g3a`, and expect four `OK` lines. It contains no game assets.
 
 ```sh
 docker run --platform linux/amd64 --network none --rm \

@@ -6,8 +6,8 @@ targeting an fx-CG50 add-in. It translates selected recovered gameplay and
 renders meshes imported from the reconstruction; it does not run Unity itself.
 
 The renderer draws at the screen's full 396×224 resolution, using integer
-arithmetic and a few hand-written SH-4 assembly loops. In a scripted gameplay
-run in an fx-CG50 emulator it showed about 27 frames a second. The emulator
+arithmetic and a few hand-written SH-4 assembly routines. In a scripted gameplay
+run in an fx-CG50 emulator it showed about 30 frames a second. The emulator
 estimates timing and does not model the processor's caches, so **speed on a
 physical calculator is unknown**; press F6 in the game to show the frame rate.
 
@@ -26,8 +26,8 @@ predates the menus and the saved high score.
 
 | Scripted gameplay in the emulator | `665c74e`, 192×108 | Full resolution, 396×224 |
 | --- | --- | --- |
-| Average frames per second | 57.4 | 27.1 |
-| Median / worst frame time | 16.9 / 23.3 ms | 35.6 / 50.1 ms |
+| Average frames per second | 57.4 | 30.3 |
+| Median / worst frame time | 16.9 / 23.3 ms | 31.8 / 44.6 ms |
 
 Before that commit, the same run averaged 12.9 frames a second at 192×108.
 

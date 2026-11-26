@@ -61,10 +61,15 @@ typedef struct {
     int16_t x[3], y[3];
     int32_t z[3];
     TRTexCoord uv[3];
-    uint16_t material;
+    TRBounds bounds;
+    uint8_t material;
 } Listed;
+_Static_assert(MATERIAL_LIMIT <= 256, "materials are listed by a byte");
 _Static_assert((TR_HEIGHT + TR_BAND_HEIGHT - 1) / TR_BAND_HEIGHT <= 16,
     "each strip needs a bit in scene_bands");
+
+/* The strip bits of two neighbouring triangles in the list. */
+typedef union { uint32_t both; uint16_t one[2]; } Pair;
 
 /* Each position is transformed once per instance. The view-space copy is only
  * needed for clipping. */
@@ -75,7 +80,8 @@ static int32_t floor_depth[TR_HEIGHT];   /* floor depth * 16 along each row */
 static Listed scene[TR_SCENE_TRIANGLES];
 /* One bit for each strip of TR_BAND_HEIGHT rows that a listed triangle
  * touches. Kept apart so that each strip scans little memory. */
-static uint16_t scene_bands[TR_SCENE_TRIANGLES];
+static Pair scene_bands[TR_SCENE_TRIANGLES / 2];
+_Static_assert(TR_SCENE_TRIANGLES % 2 == 0, "bands are tested in pairs");
 static size_t scene_count;
 static TRMaterial materials[MATERIAL_LIMIT];
 static unsigned material_count;
@@ -125,12 +131,14 @@ static inline void finish_vertex(size_t index, int32_t x, int32_t y, int32_t z)
     if (above < -SCREEN_BOTTOM * depth) flags |= OUT_BOTTOM;
     int16_t *view = view_cache[index];
     view[0] = (int16_t)x; view[1] = (int16_t)up; view[2] = (int16_t)depth;
-    if (!(flags & (OUT_NEAR | OUT_FAR))) {
+    /* A vertex in the view is well inside the guard band. */
+    if (flags & (OUT_LEFT | OUT_RIGHT | OUT_TOP | OUT_BOTTOM)) {
         int32_t limit = GUARD * depth;
         if (across > limit || across < -limit || above > limit || above < -limit)
             flags |= OUT_GUARD;
-        else project(&out->screen, x, up, depth);
     }
+    if (!(flags & (OUT_NEAR | OUT_FAR | OUT_GUARD)))
+        project(&out->screen, x, up, depth);
     out->flags = flags;
 }
 
@@ -242,16 +250,20 @@ static unsigned material_index(const TRMaterial *material)
 static inline void list_triangle(const TRScreenVertex *a, const TRScreenVertex *b,
     const TRScreenVertex *c, const TRTexCoord uv[3], unsigned material, bool cull)
 {
-    int top, bottom;
-    if (!tr_triangle_rows(a, b, c, cull, &top, &bottom)) return;
+    TRBounds bounds;
+    if (!tr_triangle_rows(a, b, c, cull, &bounds)) return;
     if (scene_count == TR_SCENE_TRIANGLES) return;
-    scene_bands[scene_count] = (uint16_t)band_bits(top, bottom);
+    /* Writing the first of a pair clears its partner. */
+    if (!(scene_count & 1)) scene_bands[scene_count / 2].both = 0;
+    scene_bands[scene_count / 2].one[scene_count & 1] =
+        (uint16_t)band_bits(bounds.top, bounds.bottom);
     Listed *out = &scene[scene_count++];
     out->x[0] = (int16_t)a->x; out->y[0] = (int16_t)a->y; out->z[0] = a->z;
     out->x[1] = (int16_t)b->x; out->y[1] = (int16_t)b->y; out->z[1] = b->z;
     out->x[2] = (int16_t)c->x; out->y[2] = (int16_t)c->y; out->z[2] = c->z;
     out->uv[0] = uv[0]; out->uv[1] = uv[1]; out->uv[2] = uv[2];
-    out->material = (uint16_t)material;
+    out->bounds = bounds;
+    out->material = (uint8_t)material;
 }
 
 /* Clip in view space, so triangles spanning the near plane (especially the
@@ -289,7 +301,6 @@ static void list_clipped(const TRTriangle *triangle, unsigned material, bool cul
 static bool junction_face(const TRMesh *mesh, const Instance *instance,
     const TRTriangle *triangle)
 {
-    if (!instance->junction_part) return true;
     int x = 0, z = 0;
     for (int i = 0; i < 3; i++) {
         x += mesh->positions[triangle->corner[i]][0];
@@ -324,7 +335,7 @@ static void list_mesh(const TRMesh *mesh, const Instance *instance, uint16_t bas
         if (a->flags & b->flags & c->flags & OUTSIDE) continue;
         unsigned any = a->flags | b->flags | c->flags;
         if (any & OUT_FAR) continue;
-        if (!junction_face(mesh, instance, t)) continue;
+        if (instance->junction_part && !junction_face(mesh, instance, t)) continue;
         unsigned material = t->floor ? floor_index : plain_index;
         if (any & (OUT_NEAR | OUT_GUARD)) list_clipped(t, material, cull);
         else list_triangle(&a->screen, &b->screen, &c->screen, t->uv, material, cull);
@@ -506,16 +517,24 @@ void tr_scene_build(const TRCourse *course, const TRAssets *assets, const TRPose
     }
 }
 
+static void draw_listed(const TRTarget *target, const Listed *t)
+{
+    TRScreenVertex a = {t->x[0], t->y[0], t->z[0]}, b = {t->x[1], t->y[1], t->z[1]},
+        c = {t->x[2], t->y[2], t->z[2]};
+    tr_raster_visible(target, &a, &b, &c, &t->bounds, t->uv, &materials[t->material]);
+}
+
 void tr_scene_draw(const TRTarget *target)
 {
     clear_target(target);
-    unsigned wanted = band_bits(target->top, target->bottom);
-    for (size_t i = 0; i < scene_count; i++) {
-        if (!(scene_bands[i] & wanted)) continue;
-        const Listed *t = &scene[i];
-        TRScreenVertex a = {t->x[0], t->y[0], t->z[0]}, b = {t->x[1], t->y[1], t->z[1]},
-            c = {t->x[2], t->y[2], t->z[2]};
-        tr_raster_visible(target, &a, &b, &c, t->uv, &materials[t->material]);
+    uint16_t wanted = (uint16_t)band_bits(target->top, target->bottom);
+    uint32_t either = (uint32_t)wanted << 16 | wanted;
+    /* Most triangles miss a given strip, so test two of them at a time. */
+    const Pair *pair = scene_bands, *end = scene_bands + (scene_count + 1) / 2;
+    for (const Listed *t = scene; pair != end; pair++, t += 2) {
+        if (!(pair->both & either)) continue;
+        if (pair->one[0] & wanted) draw_listed(target, t);
+        if (pair->one[1] & wanted) draw_listed(target, t + 1);
     }
 }
 

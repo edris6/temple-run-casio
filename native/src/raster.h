@@ -75,11 +75,20 @@ static inline int32_t tr_max3(int32_t a, int32_t b, int32_t c)
     return c > a ? c : a;
 }
 
-/* Whether a triangle may cover any pixel of the screen and, if so, the rows it
- * can touch: *top to *bottom - 1. Most triangles of a distant or closed mesh
- * show nothing, so this is inline. */
+/* Up to this many pixel centres in its bounding box, a triangle is filled with
+ * one colour and depth. */
+#define TR_TINY_PIXELS 4
+
+typedef struct {
+    uint8_t top, bottom; /* the screen rows top to bottom - 1 it can touch */
+    uint8_t tiny;
+} TRBounds;
+_Static_assert(TR_HEIGHT <= 255, "rows are stored in bytes");
+
+/* Whether a triangle may cover any pixel of the screen and, if so, its bounds.
+ * Most triangles of a distant or closed mesh show nothing, so this is inline. */
 static inline bool tr_triangle_rows(const TRScreenVertex *a, const TRScreenVertex *b,
-    const TRScreenVertex *c, bool cull_back, int *top, int *bottom)
+    const TRScreenVertex *c, bool cull_back, TRBounds *bounds)
 {
     /* Back faces, and triangles without area. */
     int32_t area = (b->x - a->x) * (c->y - a->y) - (c->x - a->x) * (b->y - a->y);
@@ -92,16 +101,21 @@ static inline bool tr_triangle_rows(const TRScreenVertex *a, const TRScreenVerte
     int32_t left = (tr_min3(a->x, b->x, c->x) + 7) >> 4;
     int32_t right = (tr_max3(a->x, b->x, c->x) + 7) >> 4;
     if (left == right || right <= 0 || left >= TR_WIDTH) return false;
-    *top = first < 0 ? 0 : first;
-    *bottom = end > TR_HEIGHT ? TR_HEIGHT : end;
+    if (first < 0) first = 0;
+    if (end > TR_HEIGHT) end = TR_HEIGHT;
+    bounds->top = (uint8_t)first;
+    bounds->bottom = (uint8_t)end;
+    /* The choice does not depend on how the screen is split into targets. */
+    bounds->tiny = (end - first) * (right - left) <= TR_TINY_PIXELS;
     return true;
 }
 
-/* Draws the target's part of a triangle that passed tr_triangle_rows. A
- * triangle drawn in several targets gives the same pixels as drawn at once. */
+/* Draws the target's part of a triangle that passed tr_triangle_rows, which
+ * gave its bounds. A triangle drawn in several targets gives the same pixels as
+ * drawn at once. */
 void tr_raster_visible(const TRTarget *target, const TRScreenVertex *a,
-    const TRScreenVertex *b, const TRScreenVertex *c, const TRTexCoord uv[3],
-    const TRMaterial *material);
+    const TRScreenVertex *b, const TRScreenVertex *c, const TRBounds *bounds,
+    const TRTexCoord uv[3], const TRMaterial *material);
 
 /* Draws one triangle with a depth test. uv gives the texture coordinates of a,
  * b and c, and is ignored without a texture. Triangles covering only a few
@@ -110,9 +124,9 @@ static inline void tr_raster_triangle(const TRTarget *target, const TRScreenVert
     const TRScreenVertex *b, const TRScreenVertex *c, const TRTexCoord uv[3],
     const TRMaterial *material)
 {
-    int top, bottom;
-    if (tr_triangle_rows(a, b, c, material->cull_back, &top, &bottom))
-        tr_raster_visible(target, a, b, c, uv, material);
+    TRBounds bounds;
+    if (tr_triangle_rows(a, b, c, material->cull_back, &bounds))
+        tr_raster_visible(target, a, b, c, &bounds, uv, material);
 }
 
 #endif

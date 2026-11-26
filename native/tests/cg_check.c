@@ -1,7 +1,7 @@
 /* Add-in that compares the assembly loops (sh4.S) with their C references on
  * random inputs. It needs no game assets. Build it with
  * `cmake --build build-cg --target temple_check`, run TRCHECK.g3a and expect
- * three OK lines. */
+ * four OK lines. */
 #include <gint/display.h>
 #include <gint/keyboard.h>
 #include <stdint.h>
@@ -9,6 +9,7 @@
 #include "rows.h"
 
 #define ROW_CALLS 8000
+#define PLANE_CALLS 200000
 #define PRESENT_PASSES 12
 
 static TRBand band;
@@ -27,11 +28,11 @@ static int32_t between(int32_t low, int32_t high)
     return low + (int32_t)(next() % (uint32_t)(high - low + 1));
 }
 
-/* An edge position, often exactly on or beside a pixel centre, where an
- * off-by-one in the rounding would show. */
+/* An edge position as TRRows holds it, often exactly on or beside a pixel
+ * centre, where an off-by-one in the rounding would show. */
 static uint32_t edge_position(int32_t low, int32_t high)
 {
-    int32_t fraction = between(0, 3) ? between(0, 65535) : between(0x7ffe, 0x8002);
+    int32_t fraction = between(0, 3) ? between(0, 65535) : between(-2, 2);
     return (uint32_t)(between(low, high) * 65536 + fraction);
 }
 
@@ -60,7 +61,7 @@ static uint32_t run_rows(void (*draw)(TRRows *))
         int mode = between(0, 2), width_bits = 7 - between(0, 2);
         uint32_t count = (uint32_t)between(1, TR_BAND_HEIGHT);
         int first = between(0, TR_BAND_HEIGHT - (int)count);
-        uint32_t u_mask = (1u << width_bits) - 1;
+        uint32_t u_mask = ((1u << width_bits) - 1) << 1;
         TRRows rows = {
             .line = &band.pixels[first * TR_WIDTH], .rows = count,
             .left_x = edge_position(-60, TR_WIDTH + 40),
@@ -69,11 +70,11 @@ static uint32_t run_rows(void (*draw)(TRRows *))
             .right_x = edge_position(-30, TR_WIDTH + 70),
             .right_step = (uint32_t)(between(0, 1) ? between(-0x60000, 0x60000)
                 : between(-3, 3) * 65536),
-            .z = (uint32_t)between(0x20000000, 0x30000000),
-            .zx = (uint32_t)between(-0x100000, 0x100000),
-            .zy = (uint32_t)between(-0x100000, 0x100000),
-            .u = next(), .ux = next() >> 8, .uy = next() >> 8,
-            .v = next(), .vx = next() >> 8, .vy = next() >> 8,
+            .z = {(uint32_t)between(0x20000000, 0x30000000),
+                (uint32_t)between(-0x100000, 0x100000),
+                (uint32_t)between(-0x100000, 0x100000)},
+            .u = {next(), next() >> 8, next() >> 8},
+            .v = {next(), next() >> 8, next() >> 8},
             .texels = mode ? texture : NULL,
             .v_mask = u_mask << width_bits, .u_mask = u_mask,
             .color = next() & 0xffffu,
@@ -81,20 +82,49 @@ static uint32_t run_rows(void (*draw)(TRRows *))
             .v_shift = (uint32_t)(12 - width_bits),
         };
         if (between(0, 3) == 0) { /* flat depth, equal to many pixels' */
-            rows.z = (uint32_t)between(0, 0x5f) << 24 | (next() & 0xffffu);
-            rows.zx = rows.zy = 0;
+            rows.z = (TRLinear){(uint32_t)between(0, 0x5f) << 24 | (next() & 0xffffu), 0, 0};
         }
         draw(&rows);
         /* The state left behind matters too: the next half continues from it. */
         hash = mix(hash, (uint32_t)(rows.line - band.pixels));
         hash = mix(hash, rows.rows); hash = mix(hash, rows.left_x);
-        hash = mix(hash, rows.right_x); hash = mix(hash, rows.z);
-        hash = mix(hash, rows.u); hash = mix(hash, rows.v);
+        hash = mix(hash, rows.right_x); hash = mix(hash, rows.z.value);
+        hash = mix(hash, rows.u.value); hash = mix(hash, rows.v.value);
         hash = mix(hash, rows.floor_depth ? (uint32_t)(rows.floor_depth - floor_depth) : 0);
         if (call % 100 == 99) {
             for (int i = 0; i < BAND_PIXELS; i++) hash = mix(hash, band.pixels[i]);
             random_band();
         }
+    }
+    return hash;
+}
+
+/* A signed value of any magnitude. */
+static int32_t wide(void)
+{
+    int32_t value = (int32_t)next();
+    return value >> between(0, 31);
+}
+
+static uint32_t run_plane(void (*solve)(const TRPlane *, TRLinear *, int32_t, int32_t))
+{
+    state = 362436069u;
+    uint32_t hash = 2166136261u;
+    for (int call = 0; call < PLANE_CALLS; call++) {
+        TRPlane plane;
+        plane.xb = wide(); plane.xc = wide(); plane.yc = wide(); plane.yb = wide();
+        /* Every shift, with extra calls either side of the change at 32. */
+        plane.shift = between(0, 3) ? between(12, 43) : between(30, 33);
+        plane.fraction_x = between(-7, 8); plane.fraction_y = between(-7, 8);
+        plane.anchor_x = (uint32_t)between(-1030, 1030);
+        plane.rows = (uint32_t)between(-1030, 230);
+        /* The guard shows a write beyond the result. */
+        struct { TRLinear out; uint32_t guard; } result = {{next(), next(), next()},
+            0x5a5a5a5au};
+        int32_t db = wide(), dc = wide();
+        solve(&plane, &result.out, db, dc);
+        hash = mix(hash, result.out.value); hash = mix(hash, result.out.dx);
+        hash = mix(hash, result.out.dy); hash = mix(hash, result.guard);
     }
     return hash;
 }
@@ -132,6 +162,7 @@ static uint32_t run_fill(void (*fill)(uint32_t *, uint32_t, uint32_t))
 int main(void)
 {
     uint32_t rows_c = run_rows(tr_rows_c), rows_asm = run_rows(tr_rows_sh);
+    uint32_t plane_c = run_plane(tr_plane_c), plane_asm = run_plane(tr_plane_sh);
     uint32_t present_c = run_present(tr_present_rows_c);
     uint32_t present_asm = run_present(tr_present_rows);
     uint32_t fill_c = run_fill(tr_fill_c), fill_asm = run_fill(tr_fill_sh);
@@ -142,7 +173,9 @@ int main(void)
         (unsigned)present_c, (unsigned)present_asm);
     dprint(10, 60, C_BLACK, "FILL    %s  %08x %08x", fill_c == fill_asm ? "OK" : "FAIL",
         (unsigned)fill_c, (unsigned)fill_asm);
-    dtext(10, 90, C_BLACK, "EXIT to quit");
+    dprint(10, 80, C_BLACK, "PLANE   %s  %08x %08x", plane_c == plane_asm ? "OK" : "FAIL",
+        (unsigned)plane_c, (unsigned)plane_asm);
+    dtext(10, 110, C_BLACK, "EXIT to quit");
     dupdate();
     while (getkey().key != KEY_EXIT) {}
     return 0;

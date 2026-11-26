@@ -290,6 +290,36 @@ static void check_strips_and_capacity(void)
     assert(tr_scene_size() == TR_SCENE_TRIANGLES);
 }
 
+/* Strips drawn from the list must show exactly the listed triangles, including
+ * the last of an odd number, and nothing left over from a longer list. */
+static void check_list(void)
+{
+    static const TRTexCoord uv[3] = {{0, 0}, {0, 0}, {0, 0}};
+    static TRBand strip;
+    for (int round = 0; round < 300; round++) {
+        scene_count = 0;
+        material_count = 0;
+        TRTarget whole = {a.pixels, 0, TR_HEIGHT};
+        clear_target(&whole);
+        int count = between_values(1, 9);
+        for (int i = 0; i < count; i++) {
+            TRScreenVertex corner[3];
+            int x = between_values(0, TR_WIDTH * 16), y = between_values(0, TR_HEIGHT * 16);
+            for (int k = 0; k < 3; k++)
+                corner[k] = (TRScreenVertex){x + between_values(-900, 900),
+                    y + between_values(-900, 900), between_values(1 << 24, 1 << 29)};
+            TRMaterial flat = {NULL, NULL, (uint16_t)(100 * i + 1), false};
+            list_triangle(&corner[0], &corner[1], &corner[2], uv, material_index(&flat), false);
+            tr_raster_triangle(&whole, &corner[0], &corner[1], &corner[2], uv, &flat);
+        }
+        for (int top = 0; top < TR_HEIGHT; top += TR_BAND_HEIGHT) {
+            TRTarget target = {strip.pixels, top, top + TR_BAND_HEIGHT};
+            tr_scene_draw(&target);
+            assert(!memcmp(strip.pixels, a.pixels + top * TR_WIDTH, sizeof strip.pixels));
+        }
+    }
+}
+
 int main(void)
 {
     check_build();
@@ -298,6 +328,7 @@ int main(void)
     check_junction();
     check_culling_is_invisible();
     check_strips_and_capacity();
+    check_list();
     puts("Mesh renderer checks passed");
     return 0;
 }

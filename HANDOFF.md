@@ -32,18 +32,18 @@ The same temple scenery is used throughout.
 
 ## Performance and resolution (November 2026)
 
-Emulator results for three builds: the original renderer (`4ee6a4b`, 192×108),
-the optimised renderer (`665c74e`, 192×108) and the current full-screen one
-(396×224, about 4.3 times as many pixels). All used the fx-CG50 model,
-`--timing realistic` and a fixed clock.
+Emulator results for four builds: the original renderer (`4ee6a4b`, 192×108),
+the optimised renderer (`665c74e`, 192×108), the first full-screen one
+(`54750d8`, 396×224, about 4.3 times as many pixels) and the current full-screen
+one. All used the fx-CG50 model, `--timing realistic` and a fixed clock.
 
-| Measurement | Original | Optimised, 192×108 | Current, 396×224 |
-| --- | --- | --- | --- |
-| Scripted play, about 28 s: average frames per second | 12.9 | 57.4 | 27.1 |
-| Scripted play: median / worst frame time, ms | 74.5 / 105 | 16.9 / 23.3 | 35.6 / 50.1 |
-| 600 identical game states, drawn back to back: frames per second | 12.0 | 55.8 | 25.0 |
-| Same run: instructions per frame, millions | 9.7 | 1.9 | 4.3 |
-| Same run with an assumed cache cost: frames per second | 11.3 | 46.4 | 21.9 |
+| Measurement | Original | Optimised, 192×108 | First 396×224 | Current, 396×224 |
+| --- | --- | --- | --- | --- |
+| Scripted play, about 28 s: average frames per second | 12.9 | 57.4 | 27.1 | 30.3 |
+| Scripted play: median / worst frame time, ms | 74.5 / 105 | 16.9 / 23.3 | 35.6 / 50.1 | 31.8 / 44.6 |
+| 600 identical game states, drawn back to back: frames per second | 12.0 | 55.8 | 25.0 | 28.1 |
+| Same run: instructions per frame, millions | 9.7 | 1.9 | 4.3 | 3.8 |
+| Same run with an assumed cache cost: frames per second | 11.3 | 46.4 | 21.9 | 24.2 |
 
 The emulator charges one cycle per instruction plus estimates for uncached
 memory and screen DMA. It has **no model of caches, pipeline or multiply
@@ -72,6 +72,23 @@ The optimised renderer fixed these costs in the original:
 - The 30 Hz simulation is unchanged. Frames are placed between the current
   step and a prediction of the next, so motion advances on every frame.
 
+### Later tuning at full resolution
+
+These changes draw the same colour and depth in every pixel of the 600-state run
+as `54750d8`:
+
+- Gradient setup, three times per textured triangle, moved to assembly
+  (`tr_plane`).
+- The assembly has separate row loops for walls, floor and flat triangles, which
+  keep their constants in registers. Edges are stored already rounded and
+  texture offsets in bytes.
+- A triangle's screen rows and one-sample choice are worked out once, when it is
+  listed. Strips test two list entries at a time.
+- Vertices in view skip the guard band test.
+
+Compiler options made little difference to the earlier code: `-O3` gained 0.4%,
+while link-time optimisation lost 7% and `-Os` 4%, so `-O2` stays.
+
 ### Full resolution
 
 The view is framed as before, with the former black border now filled. A frame
@@ -81,12 +98,12 @@ once. The most triangles seen in a frame was 1926 (60 course seeds), against a
 list size of 2304; any excess is silently left out.
 
 Strip height trades repeated triangle setup against cache use. In the 600-state
-run, 56-row strips gave 28.7 frames per second in the emulator and 20.9 with
-the cache estimate; 16-row strips gave 25.0 and 21.9, and leave about 60 kB
-more RAM free. 16 was chosen for the real calculator's cache; compare both
-with F6 if speed matters. Drawing two strips before the first wait for the
-screen gained about 3% in the emulator and nothing in the estimate, so it was
-not kept.
+run, before the later tuning, 56-row strips gave 28.7 frames per second in the
+emulator and 20.9 with the cache estimate; 16-row strips gave 25.0 and 21.9, and
+leave about 60 kB more RAM free. 16 was chosen for the real calculator's cache;
+compare both with F6 if speed matters. Drawing two strips before the first wait
+for the screen gained about 3% in the emulator and nothing in the estimate, so
+it was not kept.
 
 The 128-texel textures now look blocky near the camera. Textures twice the size
 would not fit in the remaining RAM.
@@ -95,14 +112,25 @@ Verification: host tests also pass under AddressSanitizer and
 UndefinedBehaviorSanitizer, and fail when bugs are planted in copies of the
 code. The check add-in matched assembly and C results in the emulator, and
 failed with bugs planted in the assembly. Over the 600-state run, colour and
-depth of every strip hashed identically in the calculator build and the host
-build. The benchmark add-in, frame-logging emulator patch and analysis scripts
-were temporary and are not in the repository.
+depth of every strip hashed identically in the calculator builds and the host
+build. The host build needs `-ffp-contract=off` for that comparison: otherwise
+an ARM compiler fuses the camera's floating-point operations and its frames
+differ slightly. The benchmark add-in, frame-logging emulator patch and analysis
+scripts were temporary and are not in the repository.
 
-Not done: CPU overclocking (gint's `clock_set_speed`) is not used, because it
-affects battery life and hardware margins. If real hardware is too slow, that
-is one option; others are writing video RAM through the cache, keeping triangle
-setup between strips, or returning to a lower resolution.
+Not done:
+
+- About 2 ms of each frame is spent waiting for the previous screen transfer. A
+  second video buffer does not fit in gint's memory. Drawing strips from the top
+  and following the DMA source address could remove the wait, but this depends
+  on hardware behaviour that the emulator does not model.
+- Trading detail for speed gained little in the 600-state run: ending the view
+  at 190 units instead of 280 gave 5% more frames, and sampling once for
+  triangles up to 16 pixels instead of 4 gave 6%. Neither was applied.
+- CPU overclocking (gint's `clock_set_speed`) is not used, because it affects
+  battery life and hardware margins.
+- Writing video RAM through the cache is untried. Keeping triangle setup between
+  strips would save little, as a triangle is set up 1.3 times on average.
 
 ## Menus and high score
 
