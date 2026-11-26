@@ -19,21 +19,49 @@ static TRCourse empty_course(void)
 static int test_dx(int heading) { return heading == 2 ? 1 : heading == 4 ? -1 : 0; }
 static int test_dz(int heading) { return heading == 1 ? 1 : heading == 3 ? -1 : 0; }
 
+/* Check generated challenges across seeds, speeds and many lookahead refills. */
+static void check_spacing(int seed, float distance)
+{
+    TRCourse c; TRRunner runner;
+    tr_course_init(&c, seed); tr_reset(&runner);
+    runner.distance = distance;
+    int last_index = -1, last_challenge = -TR_CHALLENGE_SPACING;
+    bool narrow = false, hole = false, slide = false;
+    while (c.generated < 360) {
+        for (int i = 0; i < c.count; i++) {
+            TRTile *tile = &c.tiles[i];
+            if (tile->index > last_index) {
+                if (tile->turn || tile->terrain || tile->obstacle) {
+                    assert(tile->index - last_challenge >= TR_CHALLENGE_SPACING);
+                    last_challenge = tile->index;
+                }
+                if (tile->index == 17) narrow = tile->terrain == 2;
+                if (tile->index == 23) hole = tile->terrain == 1;
+                if (tile->index == 29) slide = tile->obstacle == 2;
+                last_index = tile->index;
+            }
+            /* Move the generator forward without simulating a player. */
+            tile->obstacle = 0; tile->terrain = 0; tile->coin_lane = 2;
+        }
+        c.current = 9;
+        TRTile *tile = &c.tiles[c.current];
+        tile->turned = true;
+        c.x = (float)tile->x; c.z = (float)tile->z;
+        tr_course_step(&c, &runner, runner.forward, 0, 0);
+        assert(!runner.dead && c.count <= TR_COURSE_CAPACITY);
+    }
+    assert(narrow && hole && slide);
+}
+
 int main(void)
 {
     TRCourse a, b;
     tr_course_init(&a, 1);
     tr_course_init(&b, 1);
     assert(memcmp(&a, &b, sizeof(a)) == 0);
-    /* Seed 1 checked against the managed reference algorithm and host scheduler. */
-    const int expected_obstacles[] = {0,0,0,0,0,0,0,3,0,0,0,0};
-    const int expected_lanes[] = {2,-1,-1,0,2,2,0,2,-1,0,2,2};
+    /* The port changes the original host scheduler to space challenges. */
     assert(a.tiles[11].turn == -1 && a.tiles[11].outgoing == 4);
     assert(a.tiles[12].x == -60 && a.tiles[12].z == 660 && a.tiles[12].incoming == 4);
-    for (int i = 0; i < TR_OPENING_TILES; i++) {
-        assert(a.tiles[i].obstacle == expected_obstacles[i]);
-        assert(a.tiles[i].coin_lane == expected_lanes[i]);
-    }
     tr_course_init(&b, INT_MAX);
     tr_course_init(&b, INT_MIN);
     for (int i = 0; i < 4; i++) assert(a.tiles[i].obstacle == 0);
@@ -132,10 +160,14 @@ int main(void)
     }
 
     tr_course_init(&c, 1); tr_reset(&runner);
-    assert(c.tiles[14].terrain == 2);
     c.current = 6; c.z = 360; c.tiles[6].obstacle = 0;
     tr_course_step(&c, &runner, runner.forward, 0, 0);
-    assert(c.tiles[17].terrain == 1 && c.tiles[20].obstacle == 2);
+    assert(c.tiles[17].terrain == 2);
+    for (int seed = 0; seed < 100; seed++) {
+        check_spacing(seed, 0);
+        check_spacing(seed, 500);
+        check_spacing(seed, 2500);
+    }
     /* The Region2D ground shapes come directly from the track prefabs. */
     TRTile terrain = {.x=100, .z=200, .incoming=1, .terrain=1};
     assert(tr_terrain_ground(&terrain, 100, 173));

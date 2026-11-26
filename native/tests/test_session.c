@@ -87,6 +87,22 @@ int main(void)
     tr_session_advance(&duck, (TRInput){.slide=true}, 3, 1);
     assert(!duck.runner.dead && duck.runner.sliding && duck.course.z > 123);
 
+    /* At maximum speed, finish a slide, have time to react, then jump a gap
+     * at the minimum spacing used by the generator. */
+    s = approaching_jump_tree();
+    s.course.current = 1; s.course.tiles[2].obstacle = 2;
+    s.course.tiles[8].terrain = 1;
+    s.runner.speed = 210;
+    tr_session_advance(&s, (TRInput){.slide=true}, 1, 1);
+    tr_session_advance(&s, (TRInput){0}, 23, 1);
+    assert(!s.runner.dead && !s.runner.sliding && s.course.z < 287);
+    /* The gap starts at z=455, leaving at least 0.8 seconds after sliding. */
+    assert((455 - s.course.z) / s.runner.speed >= 0.8f);
+    tr_session_advance(&s, (TRInput){0}, 16, 1);
+    tr_session_advance(&s, (TRInput){.jump=true}, 1, 1);
+    tr_session_advance(&s, (TRInput){0}, 20, 1);
+    assert(!s.runner.dead && s.course.z > 505);
+
     s = approaching_jump_tree();
     s.course.tiles[2].obstacle = 0; s.course.tiles[2].terrain = 2;
     s.course.current = 1; s.course.z = 85; s.runner.forward = 65;

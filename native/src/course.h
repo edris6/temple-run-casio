@@ -6,6 +6,9 @@
 #define TR_OPENING_TILES 12
 #define TR_COURSE_CAPACITY 32
 #define TR_COURSE_LOOKAHEAD 16
+/* Six tile centres are 360 units apart: at maximum speed this leaves time
+ * to finish a slide and react to the next hazard or junction. */
+#define TR_CHALLENGE_SPACING 6
 
 typedef struct {
     int index;
@@ -25,7 +28,7 @@ typedef struct { int values[56], next, nextp; } TRRandom;
 
 typedef struct {
     TRTile tiles[TR_COURSE_CAPACITY];
-    int count, current, generated, until_turn, since_obstacle;
+    int count, current, generated, until_turn, since_obstacle, last_challenge;
     TRRandom random;
     float x, z; /* actual player position */
     int heading;

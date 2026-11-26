@@ -123,14 +123,21 @@ static void append_tile(TRCourse *c, float distance)
         tile->x = previous->x + 60 * dx(previous->outgoing);
         tile->z = previous->z + 60 * dz(previous->outgoing);
     }
-    if (--c->until_turn <= 0) {
+    --c->until_turn;
+    /* The first three examples are spaced out after the first turn. Delay
+     * a due junction rather than putting it next to another challenge. */
+    bool tutorial_straight = tile->index >= 12 && tile->index <= 29;
+    bool can_challenge = tile->index - c->last_challenge >= TR_CHALLENGE_SPACING;
+    if (c->until_turn <= 0 && can_challenge && !tutorial_straight) {
         tile->turn = next(&c->random, 0, 2) == 0 ? -1 : 1;
         tile->junction = true;
         tile->outgoing = turn_heading(tile->incoming, tile->turn);
         c->until_turn = next(&c->random, distance < 250 ? 10 : distance < 1000 ? 6 : 3, 13);
     } else {
+        if (c->until_turn <= 0) c->until_turn = 1;
         c->since_obstacle++;
         if (tile->index > 3 && c->since_obstacle >= (distance < 250 ? 6 : 4) &&
+            can_challenge && c->until_turn >= TR_CHALLENGE_SPACING && !tutorial_straight &&
             next(&c->random, 0, 100) < 60) {
             c->since_obstacle = 0;
             int hazard = next(&c->random, 0, distance < 250 ? 2 : distance < 500 ? 4 : 5);
@@ -142,11 +149,10 @@ static void append_tile(TRCourse *c, float distance)
         }
         /* Introduce each requested obstacle after the first junction, with
          * clear tiles between them. Placement is authored for this port. */
-        if (tile->index >= 12 && tile->index <= 20) {
-            tile->obstacle = 0; tile->terrain = 0;
-            if (tile->index == 14) tile->terrain = 2;
-            if (tile->index == 17) tile->terrain = 1;
-            if (tile->index == 20) tile->obstacle = 2;
+        if (tutorial_straight) {
+            if (tile->index == 17) tile->terrain = 2;
+            if (tile->index == 23) tile->terrain = 1;
+            if (tile->index == 29) tile->obstacle = 2;
         }
         if (tile->index > 0 && tile->index % 6 < 4 && tile->obstacle == 0)
             tile->coin_lane = next(&c->random, -1, 2);
@@ -155,12 +161,15 @@ static void append_tile(TRCourse *c, float distance)
         if (tile->obstacle == 0 && tile->index > 15 && c->elapsed >= 15.0f)
             (void)next(&c->random, 0, 100);
     }
+    if (tile->turn || tile->terrain || tile->obstacle)
+        c->last_challenge = tile->index;
 }
 
 void tr_course_init(TRCourse *c, int seed)
 {
     memset(c, 0, sizeof(*c));
     random_init(&c->random, seed);
+    c->last_challenge = -TR_CHALLENGE_SPACING;
     c->until_turn = 12;
     c->heading = 1;
     c->view_z = 1;

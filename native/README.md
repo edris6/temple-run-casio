@@ -30,6 +30,11 @@ original UI, sound, saves and the full scene are not integrated.
 Input timing and performance still need physical-device testing. Camera framing,
 depth handling and material handling are temporary.
 
+The port spaces every generated hazard, narrow section and junction at least
+six 60-unit tiles apart. At maximum speed, the tested slide-to-gap case leaves
+at least 0.8 seconds after the slide finishes before the gap starts. This is a
+course-generation guarantee, not a measurement of a player's reaction time.
+
 ## Code provenance
 
 | Native implementation | Reconstructed Unity source |

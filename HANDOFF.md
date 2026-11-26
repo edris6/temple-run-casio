@@ -7,6 +7,14 @@ provenance.
 
 ## Junctions and requested obstacles
 
+To give the player more time between actions, the course generator now keeps
+at least six tile centres (360 units) between any two hazards, narrow sections
+or junctions. Turns due too close to a hazard are delayed. The first narrow,
+gap and slide examples are at tiles 17, 23 and 29, with the next junction no
+sooner than tile 35. Generator checks cover 100 seeds at three progress values;
+a session test exercises a slide followed by a jump at maximum speed. Physical
+device and real-player reaction times remain unverified.
+
 The first and subsequent generated corners are now T junctions: either arrow
 selects the corresponding exit. The already-generated continuation is rotated
 when needed, so both choices reuse the same course and assets. The junction
