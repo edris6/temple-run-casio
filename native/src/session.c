@@ -32,12 +32,12 @@ void tr_session_advance(TRSession *session, TRInput input, int ticks, int new_se
 {
     TRRunner *runner = &session->runner;
     TRCourse *course = &session->course;
-    if (input.toggle_pause && !runner->dead)
-        session->paused = !session->paused;
-    if (input.restart && runner->dead) {
+    /* A run can be restarted once it is over, or from the pause menu. */
+    if (input.restart && (runner->dead || session->paused)) {
         tr_session_reset(session, new_seed);
-        ticks = 0; /* Time accumulated on the result screen is not gameplay. */
-    }
+        ticks = 0; /* Time accumulated on the menu is not gameplay. */
+    } else if (input.toggle_pause && !runner->dead)
+        session->paused = !session->paused;
     /* Apply input queued during rendering before simulating accumulated ticks. */
     if (input.jump && !session->paused) tr_jump(runner);
     if (input.slide && !session->paused) tr_slide(runner);

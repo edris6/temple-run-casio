@@ -11,15 +11,18 @@ run in an fx-CG50 emulator it showed about 27 frames a second. The emulator
 estimates timing and does not model the processor's caches, so **speed on a
 physical calculator is unknown**; press F6 in the game to show the frame rate.
 
-Scripted emulator runs cleared the opening tree and the first junction in both
-directions. Animation, the original UI, audio and saves are unfinished, and
-calculator compatibility has not been verified.
+F1 opens a pause menu, a game over menu follows each run, and the high score is
+saved on the calculator. Scripted emulator runs cleared the opening tree and
+the first junction in both directions. Animation, the original UI, audio and
+the rest of the game are unfinished, and calculator compatibility has not been
+verified.
 
 ## Faster, lower-resolution version
 
 Commit `665c74e`, "Rewrite the renderer for a smoother frame rate", has the
 performance boost at the lower resolution: it draws at 192×108 and scales the
-picture 2× to the screen. Use it if speed matters more than sharpness.
+picture 2× to the screen. Use it if speed matters more than sharpness. It
+predates the menus and the saved high score.
 
 | Scripted gameplay in the emulator | `665c74e`, 192×108 | Full resolution, 396×224 |
 | --- | --- | --- |

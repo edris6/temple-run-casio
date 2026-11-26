@@ -10,12 +10,13 @@ ASSET_HEADERS = $(addprefix build/,$(addsuffix .h, player path path_h \
 	jump jump_h slide slide_h trip trip_h coin player_tex path_tex tree_tex))
 
 .PHONY: test clean
-test: build/test_recovered build/test_renderer build/test_raster build/test_course build/test_session
+test: build/test_recovered build/test_renderer build/test_raster build/test_course build/test_session build/test_menu
 	./build/test_recovered
 	./build/test_renderer
 	./build/test_raster
 	./build/test_course
 	./build/test_session
+	./build/test_menu
 
 build/test_recovered: src/recovered.c src/recovered.h tests/test_recovered.c
 	mkdir -p build
@@ -38,6 +39,10 @@ build/test_session: $(GAME_DEPS) tests/test_session.c
 	mkdir -p build
 	$(CC) $(CFLAGS) -Isrc $(GAME) tests/test_session.c -lm -o $@
 
+build/test_menu: src/menu.c src/menu.h src/save.c src/save.h $(GAME_DEPS) tests/test_menu.c
+	mkdir -p build
+	$(CC) $(CFLAGS) -Isrc src/menu.c src/save.c $(GAME) tests/test_menu.c -lm -o $@
+
 # Generate the asset headers from the user's Unity checkout first.
 build/preview: src/preview.c src/assets.c src/assets.h src/renderer.c src/renderer.h \
 		$(RASTER_DEPS) $(GAME_DEPS) $(ASSET_HEADERS)
@@ -45,4 +50,4 @@ build/preview: src/preview.c src/assets.c src/assets.h src/renderer.c src/render
 		$(RASTER) $(GAME) -lm -o $@
 
 clean:
-	rm -f build/test_recovered build/test_renderer build/test_raster build/test_course build/test_session build/preview
+	rm -f build/test_recovered build/test_renderer build/test_raster build/test_course build/test_session build/test_menu build/preview

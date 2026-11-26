@@ -5,7 +5,8 @@ include(GenerateG3A)
 find_package(Gint 2.1 REQUIRED)
 
 add_executable(temple src/cg_main.c src/recovered.c src/course.c src/session.c
-  src/renderer.c src/raster.c src/rows.c src/sh4.S src/present.c src/assets.c)
+  src/renderer.c src/raster.c src/rows.c src/sh4.S src/present.c src/assets.c
+  src/menu.c src/save.c)
 target_include_directories(temple PRIVATE src build)
 target_compile_options(temple PRIVATE -Wall -Wextra -O2)
 target_link_libraries(temple Gint::Gint)

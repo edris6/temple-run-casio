@@ -42,6 +42,15 @@ int main(void)
     tr_session_advance(&s, (TRInput){.restart=true}, 30, 1);
     assert(!s.runner.dead && s.runner.forward == -35 && s.runner.coins == 0);
 
+    /* Restart is ignored during a run, and works from the pause menu. */
+    tr_session_advance(&s, (TRInput){0}, 15, 1);
+    float travelled = s.runner.forward;
+    tr_session_advance(&s, (TRInput){.restart=true}, 1, 1);
+    assert(s.runner.forward > travelled);
+    tr_session_advance(&s, (TRInput){.toggle_pause=true}, 1, 1);
+    tr_session_advance(&s, (TRInput){.restart=true, .toggle_pause=true}, 30, 1);
+    assert(!s.paused && s.runner.forward == -35);
+
     tr_session_reset(&s, 1);
     s.course.current = 11; s.course.z = 650;
     s.runner.stumble_kill_timer = 10;

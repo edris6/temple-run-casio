@@ -14,17 +14,34 @@ original game. The target is an fx-CG50 `.g3a` add-in built with fxSDK and gint.
 
 ## Controls
 
-| Key | Action |
-| --- | --- |
-| Up / Down | Jump / slide |
-| Left / Right | Move sideways on straight paths, turn near corners |
-| 4 / 6 | Move sideways |
-| F1 | Pause and resume |
-| F6 | Show or hide the frame rate |
-| EXE | Restart after death |
-| EXIT | Quit |
+| Key | While running | In a menu |
+| --- | --- | --- |
+| Up / Down | Jump / slide | Choose an entry |
+| Left / Right | Move sideways on straight paths, turn near corners | |
+| F1 | Pause | Resume, if paused |
+| EXE | | Pick the highlighted entry |
+| F6 | Show or hide the frame rate | The same |
+| EXIT | Quit | Quit |
+| MENU | Calculator's main menu | The same |
 
 New runs use the calculator clock as a seed.
+
+## Menus and high score
+
+F1 opens a pause menu with Resume, Restart and Quit. When a run ends, the game
+over menu offers Restart and Quit; its selection ignores Up and Down for half a
+second, so that a late jump or slide does not pick Quit. Both show the score
+and the high score. These are simple menus written for the port, not the
+original game's panels.
+
+The high score is kept in storage memory as `TRunner.sav`. It is written when a
+run ends, and when a run is abandoned through Restart, Quit, EXIT or MENU. If
+writing fails, the menu says so. Turning the calculator off or resetting it
+during a run does not save that run.
+
+MENU leaves for the calculator's main menu; opening the add-in again returns to
+the paused game, unless another add-in was started in between. Quit and EXIT
+also lead to the main menu, and the add-in then starts afresh when reopened.
 
 ## Current diagnostic
 
@@ -38,7 +55,8 @@ rotated into the selected direction. The first examples of the narrow path,
 gap and slide obstacle are deliberately placed after the first junction; this
 placement is authored for the port. The runner is in its bind pose except for
 an approximate compressed slide posture. Original skeletal animation,
-original UI, sound, saves and the full scene are not integrated.
+original UI, sound, the original game's saves and the full scene are not
+integrated.
 Input timing and performance still need physical-device testing. Camera framing,
 depth handling and material handling are temporary.
 
@@ -140,7 +158,7 @@ build/preview build/frame.ppm 60
 ## Tests
 
 `make test` runs native C checks for motion, scoring, course generation, input,
-geometry and the renderer. The rasterizer is compared with double-precision
+menus, the high score file, geometry and the renderer. The rasterizer is compared with double-precision
 references for coverage, shared edges, depth and texture coordinates. From the
 project root, `python3 -m unittest discover -s tests -v` also checks the asset
 converters against synthetic fixtures.
@@ -168,7 +186,8 @@ scripts, using `/work` for the mounted `native/` directory and a fixed emulator
 clock of `2026-01-01 00:00`. They require a separate emuCasioCalc build and are
 not part of `make test`. The opening script never turns, so its final
 screenshot shows the run ending at the first junction. The scripts depend on
-timing and on the clock-derived seed.
+timing and on the clock-derived seed. The emulator keeps the saved high score
+in `storage/fls0/` under its working directory, so later runs show it.
 
 ## Next integration work
 
@@ -178,4 +197,5 @@ timing and on the clock-derived seed.
    bind-pose runner rendering with skeleton and animation playback.
 3. Verify the connected course, controls, ground checks and camera across
    directions and seeds against the reconstruction.
-4. Add original pause and death panels and other pickups.
+4. Replace the port's menus with the original pause and death panels, and add
+   other pickups.

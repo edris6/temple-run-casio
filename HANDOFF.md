@@ -104,6 +104,23 @@ affects battery life and hardware margins. If real hardware is too slow, that
 is one option; others are writing video RAM through the cache, keeping triangle
 setup between strips, or returning to a lower resolution.
 
+## Menus and high score
+
+`menu.c` holds the key handling for play and for the pause and game over menus,
+`save.c` the 12-byte checked record, and `cg_main.c` draws the menus. Files are
+read and written through `gint_world_switch`, as gint requires. The game reads
+keys with `pollevent()`, which does not act on MENU by itself, so `cg_main.c`
+calls `gint_osmenu()` and comes back paused. `gint_setrestart(1)` lets the
+add-in be reopened after quitting. The 4 and 6 keys no longer steer; the arrows
+do.
+
+Host tests cover the key handling and the record, including damaged and short
+files. In the emulator the score was saved, loaded in a later run and shown;
+MENU returned to the pause menu; and read-only storage produced the failure
+message. The emulator has no real main menu and returns from it at once, so
+**the trip to the calculator's menu and back, reopening after Quit, and writing
+to real storage memory are untested on hardware.**
+
 ## Current state
 
 - Imported original meshes are transformed into fixed-point coordinates by the
@@ -112,15 +129,15 @@ setup between strips, or returning to a lower resolution.
 - Short horizontal dashes appear where the floor meets the planted edging. The
   192×108 build shows them too; the cause has not been investigated.
 - Left/right move sideways on straight paths and request a turn near a corner;
-  up jumps, down slides, 4/6 also move sideways, F1 pauses, F6 shows the frame
-  rate and EXIT quits.
+  up jumps, down slides, F1 pauses, F6 shows the frame rate, EXIT quits and
+  MENU opens the calculator's menu.
 - Straight, corner, gap and narrow-path ground polygons come from the temple
   prefabs. Ground queries run after movement and support jumping gaps and falling.
   Missed corners still cause immediate death rather than a falling animation,
   with only the runner left in view.
 - The runner uses its bind pose with an approximate slide posture. Animation,
-  scenery, original UI, audio, saves, power-ups, and other game features remain
-  unfinished.
+  scenery, original UI, audio, saves other than the high score, power-ups, and
+  other game features remain unfinished.
 
 ## Verification and limits
 
@@ -138,7 +155,8 @@ setup between strips, or returning to a lower resolution.
 ## Next work
 
 1. Test the current build on an fx-CG50: note the F6 frame rate in several
-   scenes, check input timing, and run `TRCHECK.g3a`.
+   scenes, check input timing, run `TRCHECK.g3a`, press MENU and return, and
+   check that the high score survives quitting.
 2. Import and bake the actual runner skeleton and animation clips. The runner
    prefab references the uncompressed `Assets/AnimationClip/Run_0.anim` by GUID
    `5258da0604b9bea4fa9a3a3a04473074`. Its mesh has bone weights in vertex stream
@@ -146,8 +164,8 @@ setup between strips, or returning to a lower resolution.
    merge vertices, so preserve skin weights in both.
 3. Verify ground, turns and collisions across headings and seeds; port falling
    and death presentation, and improve camera tracking during jumps and turns.
-4. Add original UI, environment, effects, pickups and saves while keeping source
-   provenance and authored approximations clear.
+4. Add original UI, environment, effects, pickups and the other saved
+   progress while keeping source provenance and authored approximations clear.
 
 The reference checkout used to generate the headers in `native/build/` was at
 commit `65964ad`; its temporary copy in `/tmp` is gone, so re-clone it before
