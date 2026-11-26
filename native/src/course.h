@@ -18,6 +18,7 @@ typedef struct {
     unsigned coins_collected;
     bool hit;
     bool turned;
+    bool junction; /* both left and right are available */
 } TRTile;
 
 typedef struct { int values[56], next, nextp; } TRRandom;

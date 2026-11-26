@@ -10,8 +10,10 @@ typedef struct {
     int kind;
     float forward, height, lateral, side;
     bool world;
+    bool sliding;
     float tile_x, tile_z, camera_x, camera_z;
     float view_x, view_z;
+    int junction_part, incoming;
 } Transform;
 
 /* Most reconstructed meshes share vertices between triangles. Transform each
@@ -60,6 +62,11 @@ static Vec3 world_vertex(const float *v, Transform t)
         p.x = v[0];
         p.y = v[1] + 5.4f + t.height * 0.3f - 9.0f;
         p.z = v[2] + 20.0f + 10.0f;
+        if (t.sliding) {
+            float above_ground = v[1] + 5.4f;
+            p.y = -9.0f + above_ground*0.4f + t.height*0.3f;
+            p.z += above_ground*0.6f;
+        }
     } else { /* coin prefab is not rotated with the wall meshes */
         p.x = v[0] + t.side - t.lateral;
         p.y = v[1] + 3.0f - 9.0f;
@@ -277,6 +284,20 @@ static bool is_floor_face(const TRMesh *mesh, int kind, unsigned a, unsigned b, 
     return ya >= -145 && ya <= -143 && yb >= -145 && yb <= -143 && yc >= -145 && yc <= -143;
 }
 
+/* Combine the two original corner meshes. Remove their walls that would
+ * otherwise close the opposite exit; no second path mesh is stored. */
+static bool junction_face(const TRMesh *mesh, Transform t, unsigned a, unsigned b, unsigned c)
+{
+    if (!t.junction_part) return true;
+    int x = mesh->fixed_vertices[a][0] + mesh->fixed_vertices[b][0] + mesh->fixed_vertices[c][0];
+    int z = mesh->fixed_vertices[a][2] + mesh->fixed_vertices[b][2] + mesh->fixed_vertices[c][2];
+    int side = x*dir_z(t.incoming) - z*dir_x(t.incoming);
+    /* Split across the full depth of the corner. Restricting this split to
+     * the far side also removed the near wall of the right-hand exit. */
+    if (t.junction_part == 1) return side <= 384;
+    return side >= 384;
+}
+
 static void fixed_mesh(TRFramebuffer *fb, const TRMesh *m, Transform t, uint16_t base)
 {
     int ox = (int)((t.tile_x-t.camera_x)*16), oz = (int)((t.tile_z-t.camera_z)*16);
@@ -285,7 +306,14 @@ static void fixed_mesh(TRFramebuffer *fb, const TRMesh *m, Transform t, uint16_t
     for (size_t i = 0; i < m->vertex_count; i++) {
         const int16_t *v = m->fixed_vertices[i];
         FixedVertex p = {v[0], v[1], v[2], m->fixed_uvs[i][0], m->fixed_uvs[i][1]};
-        if (t.kind == 0) p.y += height;
+        if (t.kind == 0) {
+            if (t.sliding) {
+                int above_ground = p.y + 144;
+                p.y = -144 + above_ground*2/5;
+                p.z += above_ground*3/5;
+            }
+            p.y += height;
+        }
         else if (t.world) {
             int x = p.x + ox, z = p.z + oz;
             p.x = (x*vz-z*vx)/4096;
@@ -306,6 +334,7 @@ static void fixed_mesh(TRFramebuffer *fb, const TRMesh *m, Transform t, uint16_t
     for (size_t i = 0; i + 2 < m->index_count; i += 3) {
         unsigned ia = m->indices[i], ib = m->indices[i+1], ic = m->indices[i+2];
         if (ia >= m->vertex_count || ib >= m->vertex_count || ic >= m->vertex_count) continue;
+        if (!junction_face(m, t, ia, ib, ic)) continue;
         uint16_t color = (uint16_t)(base + ((i / 3) % 3) * 0x0821);
         bool perspective = is_floor_face(m, t.kind, ia, ib, ic);
         if (fixed_valid[ia] && fixed_valid[ib] && fixed_valid[ic]) {
@@ -404,15 +433,15 @@ static Transform world_transform(const TRCourse *course, int kind, float x, floa
     return t;
 }
 
-static int corner_index(const TRTile *tile)
+static int corner_index(const TRTile *tile, int sign)
 {
     static const int left[] = {0,0,2,3,1};
     static const int right[] = {0,1,0,2,3};
-    return tile->turn < 0 ? left[tile->incoming] : right[tile->incoming];
+    return sign < 0 ? left[tile->incoming] : right[tile->incoming];
 }
 
 void tr_render_world(TRFramebuffer *fb, const TRCourse *course, const TRAssets *assets,
-    float height)
+    float height, bool sliding)
 {
     clear_frame(fb);
     for (int i = 0; i < course->count; i++) {
@@ -427,7 +456,7 @@ void tr_render_world(TRFramebuffer *fb, const TRCourse *course, const TRAssets *
         int kind = axis ? 10 : 1;
         const TRMesh *ground = assets->path[axis];
         if (tile->turn) {
-            int corner = corner_index(tile);
+            int corner = corner_index(tile, tile->turn);
             kind = 6 + corner;
             ground = assets->corner[corner];
         }
@@ -440,7 +469,19 @@ void tr_render_world(TRFramebuffer *fb, const TRCourse *course, const TRAssets *
             ground = assets->narrow[axis];
         }
         Transform t = world_transform(course, kind, tile->x, tile->z);
-        mesh(fb, ground, t, 0x7be9);
+        if (tile->junction) {
+            int left = corner_index(tile, -1), right = corner_index(tile, 1);
+            t = world_transform(course, 6 + left, tile->x, tile->z);
+            t.junction_part = 1; t.incoming = tile->incoming;
+            mesh(fb, assets->corner[left], t, 0x7be9);
+            t = world_transform(course, 6 + right, tile->x, tile->z);
+            t.junction_part = 2; t.incoming = tile->incoming;
+            mesh(fb, assets->corner[right], t, 0x7be9);
+            int exit_axis = tile->outgoing == 1 || tile->outgoing == 3 ? 0 : 1;
+            t = world_transform(course, exit_axis ? 10 : 1,
+                tile->x - 60*dir_x(tile->outgoing), tile->z - 60*dir_z(tile->outgoing));
+            mesh(fb, assets->path[exit_axis], t, 0x7be9);
+        } else mesh(fb, ground, t, 0x7be9);
         if (tile->obstacle) {
             kind = (tile->obstacle == 1 ? 2 : tile->obstacle == 2 ? 3 : 4) + (axis ? 9 : 0);
             const TRMesh *obstacle = tile->obstacle == 1 ? assets->jump[axis] :
@@ -457,6 +498,7 @@ void tr_render_world(TRFramebuffer *fb, const TRCourse *course, const TRAssets *
             mesh(fb, assets->coin, t, 0xfc00);
         }
     }
-    Transform runner = {.kind=0, .height=height};
+    /* Temporary posture until the original skeletal animation is imported. */
+    Transform runner = {.kind=0, .height=height, .sliding=sliding};
     mesh(fb, assets->player, runner, 0x9a63);
 }

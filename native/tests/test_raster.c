@@ -16,6 +16,26 @@ static uint32_t next_value(void)
 
 int main(void)
 {
+    /* Both halves of the junction must include their near-side walls as well
+     * as their far-side geometry, whichever way the runner approaches. */
+    for (int heading = 1; heading <= 4; heading++) {
+        int dx = dir_x(heading), dz = dir_z(heading);
+        int16_t points[6][3];
+        for (int i = 0; i < 6; i++) {
+            int side = i < 3 ? 12 : -12;
+            int ahead = -20;
+            points[i][0] = (int16_t)(16*(side*dz + ahead*dx));
+            points[i][1] = 0;
+            points[i][2] = (int16_t)(16*(-side*dx + ahead*dz));
+        }
+        TRMesh part = {0}; part.fixed_vertices = points;
+        Transform t = {.junction_part=1, .incoming=heading};
+        assert(!junction_face(&part, t, 0, 1, 2));
+        assert(junction_face(&part, t, 3, 4, 5));
+        t.junction_part = 2;
+        assert(junction_face(&part, t, 0, 1, 2));
+        assert(!junction_face(&part, t, 3, 4, 5));
+    }
     for (int depth = 48; depth <= 6400; depth++) {
         uint32_t inverse = 268435456u / (unsigned)depth;
         assert(divide_cached(INT_MIN, depth, inverse) == INT_MIN / depth);

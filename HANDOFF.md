@@ -5,6 +5,23 @@ Python or Casio BASIC prototypes. The port is incomplete; see
 [native/README.md](native/README.md) for controls, build instructions and source
 provenance.
 
+## Junctions and requested obstacles
+
+The first and subsequent generated corners are now T junctions: either arrow
+selects the corresponding exit. The already-generated continuation is rotated
+when needed, so both choices reuse the same course and assets. The junction
+renderer combines existing corner meshes, retaining the near walls of both
+exits; a host regression checks the split for all four approach directions.
+
+After the first junction, authored placements guarantee a narrow section,
+then a gap, then a slide obstacle, each separated by clear tiles. Left/right
+steer on straights and choose a direction near a junction, up jumps and down
+slides. The slide posture is a simple mesh deformation, not the original
+skeletal animation. Collision and D-pad session checks cover these mechanics;
+the emulator was exercised through the first junction in both directions, but
+the complete obstacle sequence still needs an emulator and real-device playtest.
+The same temple scenery is used throughout.
+
 ## Renderer and display optimization
 
 The flat temple-floor faces now use approximate perspective-correct texture
@@ -47,7 +64,7 @@ Physical VRAM/DMA behavior and performance still need a calculator test.
 - Straight, corner, gap and narrow-path ground polygons come from the temple
   prefabs. Ground queries run after movement and support jumping gaps and falling.
   Missed corners still cause immediate death rather than a falling animation.
-- The runner is still in its bind pose. Animation, scenery, original UI, audio,
+- The runner uses its bind pose with an approximate slide posture. Animation, scenery, original UI, audio,
   saves, power-ups, and other game features remain unfinished.
 
 ## Verification and limits

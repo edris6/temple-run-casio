@@ -32,6 +32,6 @@ typedef struct {
 void tr_render_frame(TRFramebuffer *fb, const TRMesh *path, const TRMesh *player,
     float forward, float height, float lateral);
 void tr_render_world(TRFramebuffer *fb, const TRCourse *course, const TRAssets *assets,
-    float height);
+    float height, bool sliding);
 
 #endif

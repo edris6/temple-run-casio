@@ -1,9 +1,10 @@
 # Native fx-CG50 port (work in progress)
 
-**Latest source status:** scripted emulator runs jump the opening tree, take
-the first left turn and clear a test gap. A fixed-point renderer and lower
-internal resolution improve emulator performance. This is still an incomplete
-diagnostic; physical-calculator behavior is unverified. See [HANDOFF.md](../HANDOFF.md).
+**Latest source status:** the first junction offers both directions, followed
+by a narrow section, a gap and a low obstacle. A fixed-clock emulator run has
+exercised the opening jump and both junction choices; the other mechanics have
+host-level input and collision tests. Physical-calculator behavior remains
+unverified. See [HANDOFF.md](../HANDOFF.md).
 
 This directory begins a native C port of the Unity reconstruction at
 [`LuciusTran/templerun` commit `65964ad`](https://github.com/LuciusTran/templerun/tree/65964ad).
@@ -19,13 +20,15 @@ right move sideways on straight paths and turn near corners; 4 and 6 also move
 sideways. F1 pauses, and EXIT quits. After death,
 EXE restarts; new runs use the calculator clock as a seed.
 
-The bounded course generator continues past corners, and ground checks cover
-gaps and narrow paths. The character remains in its bind pose. Animation,
+The bounded course generator continues past junctions, and ground checks cover
+gaps and narrow paths. Both junction choices lead to the same generated course
+rotated into the selected direction. The first examples of the narrow path,
+gap and slide obstacle are deliberately placed after the first junction; this
+placement is authored for the port. The runner is in its bind pose except for
+an approximate compressed slide posture. Original skeletal animation,
 original UI, sound, saves and the full scene are not integrated.
 Input timing and performance still need physical-device testing. Camera framing,
-depth handling and material handling are temporary. The slide-tree mesh and
-collision rule are imported and tested, but the reference's initial course
-generation does not place slide trees on this opening straight.
+depth handling and material handling are temporary.
 
 ## Code provenance
 
@@ -46,9 +49,8 @@ equivalent to the original binary. `tr_step` currently omits the boost and
 power-up branches, raised-ground transitions, lateral motion in distance
 calculation, animation and other host integrations. The source course
 scheduler was authored for the reconstruction; it is not the recovered
-original generator. The latest source extends the scheduler beyond the first
-12 tiles, but its turning needs further verification across directions and
-seeds. The renderer is new code, not a Unity engine implementation: it uses
+original generator. The junction and initial obstacle sequence are authored
+adaptations. The renderer is new code, not a Unity engine implementation: it uses
 fixed-point triangle transforms at 192×108, a reciprocal-depth buffer and
 near-plane clipping. Flat temple-floor faces use approximate perspective-correct
 UV mapping; other meshes still use affine UV mapping. Original lightmaps and
@@ -109,7 +111,7 @@ From the project root, `python3 -m unittest discover -s tests -v` also checks
 the mesh converter against synthetic fixtures. The runner and path converters
 were additionally exercised against the reference checkout, including the
 runner, path, coin and three obstacle meshes. The emulator was also exercised
-through the opening course and one left turn. `tests/emulator-opening.txt`,
+through the opening course and both first-turn choices. `tests/emulator-opening.txt`,
 `tests/emulator-pause.txt`, `tests/emulator-turn.txt`, and
 `tests/emulator-restart.txt` are the manual
 emulator scripts, using `/work` for the mounted `native/` directory and a

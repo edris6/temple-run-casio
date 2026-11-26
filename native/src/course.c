@@ -98,6 +98,10 @@ bool tr_course_ground_at(const TRCourse *c, float x, float z)
         } else if (tile->turn) {
             int corner = tile->turn < 0 ? left[tile->incoming] : right[tile->incoming];
             if (tr_point_inside(corners[corner], 6, point)) return true;
+            if (tile->junction) {
+                corner = tile->turn < 0 ? right[tile->incoming] : left[tile->incoming];
+                if (tr_point_inside(corners[corner], 6, point)) return true;
+            }
         } else {
             bool vertical = tile->incoming == 1 || tile->incoming == 3;
             if (tr_point_inside(vertical ? straight_v : straight_h, 4, point)) return true;
@@ -121,6 +125,7 @@ static void append_tile(TRCourse *c, float distance)
     }
     if (--c->until_turn <= 0) {
         tile->turn = next(&c->random, 0, 2) == 0 ? -1 : 1;
+        tile->junction = true;
         tile->outgoing = turn_heading(tile->incoming, tile->turn);
         c->until_turn = next(&c->random, distance < 250 ? 10 : distance < 1000 ? 6 : 3, 13);
     } else {
@@ -134,6 +139,14 @@ static void append_tile(TRCourse *c, float distance)
             else if (hazard == 2) tile->terrain = 1;
             else if (hazard == 3) tile->terrain = 2;
             else tile->obstacle = 2;
+        }
+        /* Introduce each requested obstacle after the first junction, with
+         * clear tiles between them. Placement is authored for this port. */
+        if (tile->index >= 12 && tile->index <= 20) {
+            tile->obstacle = 0; tile->terrain = 0;
+            if (tile->index == 14) tile->terrain = 2;
+            if (tile->index == 17) tile->terrain = 1;
+            if (tile->index == 20) tile->obstacle = 2;
         }
         if (tile->index > 0 && tile->index % 6 < 4 && tile->obstacle == 0)
             tile->coin_lane = next(&c->random, -1, 2);
@@ -166,13 +179,32 @@ bool tr_course_turn_near(const TRCourse *c, const TRRunner *p)
     return next_tile->turn && next_ahead > 0 && next_ahead <= p->speed*0.4f+15.0f;
 }
 
+/* The generated continuation can be rotated 180 degrees at a junction. This
+ * supplies either exit without storing two separate courses. */
+static void choose_junction(TRCourse *c, TRTile *tile, int sign)
+{
+    if (sign != tile->turn) {
+        for (int i = c->current + 1; i < c->count; i++) {
+            TRTile *next_tile = &c->tiles[i];
+            next_tile->x = 2*tile->x - next_tile->x;
+            next_tile->z = 2*tile->z - next_tile->z;
+            next_tile->incoming = (next_tile->incoming + 1) % 4 + 1;
+            next_tile->outgoing = (next_tile->outgoing + 1) % 4 + 1;
+        }
+        tile->turn = sign;
+        tile->outgoing = turn_heading(tile->incoming, sign);
+    }
+}
+
 void tr_course_request_turn(TRCourse *c, TRRunner *p, float *lateral, int sign)
 {
     if (p->dead || !sign) return;
     sign = sign < 0 ? -1 : 1;
     TRTile *tile = &c->tiles[c->current];
     float ahead = (tile->x-c->x)*dx(tile->incoming) + (tile->z-c->z)*dz(tile->incoming);
-    if (tile->turn && !tile->turned && fabsf(ahead) <= 12.0f && sign == tile->turn) {
+    if (tile->turn && !tile->turned && fabsf(ahead) <= 12.0f &&
+        (tile->junction || sign == tile->turn)) {
+        if (tile->junction) choose_junction(c, tile, sign);
         c->x = (float)tile->x; c->z = (float)tile->z;
         c->heading = tile->outgoing;
         *lateral = 0;

@@ -77,6 +77,31 @@ int main(void)
     s.course.current = 1; s.course.z = 90; s.course.x = -5; s.runner.forward = 70;
     for (int i = 0; i < 30; i++) tr_session_advance(&s, (TRInput){0}, 1, 1);
     assert(!s.runner.dead && s.course.z > 145);
+
+    /* The same D-pad inputs used on the calculator must clear each hazard. */
+    s = approaching_jump_tree();
+    s.course.tiles[2].obstacle = 2;
+    TRSession duck = s;
+    tr_session_advance(&s, (TRInput){0}, 3, 1);
+    assert(s.runner.dead);
+    tr_session_advance(&duck, (TRInput){.slide=true}, 3, 1);
+    assert(!duck.runner.dead && duck.runner.sliding && duck.course.z > 123);
+
+    s = approaching_jump_tree();
+    s.course.tiles[2].obstacle = 0; s.course.tiles[2].terrain = 2;
+    s.course.current = 1; s.course.z = 85; s.runner.forward = 65;
+    tr_session_advance(&s, (TRInput){.turn=-1}, 10, 1);
+    tr_session_advance(&s, (TRInput){0}, 25, 1);
+    assert(!s.runner.dead && s.course.z > 145 && s.lateral < 0);
+
+    for (int sign = -1; sign <= 1; sign += 2) {
+        tr_session_reset(&s, 1);
+        s.course.current = 11; s.course.z = 650;
+        tr_session_advance(&s, (TRInput){.turn=sign}, 1, 1);
+        assert(!s.runner.dead && s.course.tiles[s.course.current].index == 11 &&
+               s.course.tiles[s.course.current].turned);
+        assert(s.course.heading == (sign < 0 ? 4 : 2));
+    }
     puts("Input and session checks passed");
     return 0;
 }

@@ -16,6 +16,9 @@ static TRCourse empty_course(void)
     return c;
 }
 
+static int test_dx(int heading) { return heading == 2 ? 1 : heading == 4 ? -1 : 0; }
+static int test_dz(int heading) { return heading == 1 ? 1 : heading == 3 ? -1 : 0; }
+
 int main(void)
 {
     TRCourse a, b;
@@ -86,7 +89,7 @@ int main(void)
     assert(c.tiles[11].turned && c.heading == 4 && c.z == 660 && lateral == 0);
 
     tr_course_init(&c, 1); tr_reset(&runner); runner.stumble_kill_timer = 10;
-    c.current = 11; c.z = 660; lateral = 0;
+    c.current = 11; c.z = 660; c.tiles[11].junction = false; lateral = 0;
     tr_course_request_turn(&c, &runner, &lateral, 1);
     assert(runner.stumbling && !c.tiles[11].turned);
     tr_course_init(&c, 1); tr_reset(&runner);
@@ -100,6 +103,39 @@ int main(void)
     c.x = 112; c.z = 0; tr_reset(&runner); runner.forward = 2;
     tr_course_step(&c, &runner, 0, 0, 0);
     assert(runner.dead); /* horizontal prefab region spans x=-7..-3 */
+
+    /* Both D-pad directions select a connected course at each orientation. */
+    for (int heading = 1; heading <= 4; heading++) for (int sign = -1; sign <= 1; sign += 2) {
+        memset(&c, 0, sizeof(c)); tr_reset(&runner); lateral = 3;
+        int default_heading = (heading + 2) % 4 + 1;
+        int selected_heading = sign < 0 ? default_heading : heading % 4 + 1;
+        c.count = 4; c.heading = heading; c.x = 600; c.z = -400;
+        c.tiles[0] = (TRTile){.x=600, .z=-400, .incoming=heading,
+            .outgoing=default_heading, .turn=-1, .junction=true, .coin_lane=2};
+        for (int i = 1; i < c.count; i++) {
+            c.tiles[i] = (TRTile){.x=600 + i*60*test_dx(default_heading),
+                .z=-400 + i*60*test_dz(default_heading),
+                .incoming=default_heading, .outgoing=default_heading, .coin_lane=2};
+        }
+        assert(tr_course_ground_at(&c, 600 + 20*test_dx(default_heading),
+            -400 + 20*test_dz(default_heading)));
+        int opposite = (default_heading + 1) % 4 + 1;
+        assert(tr_course_ground_at(&c, 600 + 20*test_dx(opposite),
+            -400 + 20*test_dz(opposite)));
+        tr_course_request_turn(&c, &runner, &lateral, sign);
+        assert(!runner.dead && c.tiles[0].turned && c.heading == selected_heading && lateral == 0);
+        for (int i = 1; i < c.count; i++) {
+            assert(c.tiles[i].x == 600 + i*60*test_dx(selected_heading));
+            assert(c.tiles[i].z == -400 + i*60*test_dz(selected_heading));
+            assert(c.tiles[i].incoming == selected_heading && c.tiles[i].outgoing == selected_heading);
+        }
+    }
+
+    tr_course_init(&c, 1); tr_reset(&runner);
+    assert(c.tiles[14].terrain == 2);
+    c.current = 6; c.z = 360; c.tiles[6].obstacle = 0;
+    tr_course_step(&c, &runner, runner.forward, 0, 0);
+    assert(c.tiles[17].terrain == 1 && c.tiles[20].obstacle == 2);
     /* The Region2D ground shapes come directly from the track prefabs. */
     TRTile terrain = {.x=100, .z=200, .incoming=1, .terrain=1};
     assert(tr_terrain_ground(&terrain, 100, 173));

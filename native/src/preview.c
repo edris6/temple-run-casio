@@ -51,7 +51,7 @@ int main(int argc, char **argv)
         {&hole_mesh,&hole_horizontal}, {&narrow_mesh,&narrow_horizontal}};
     TRCourse course;
     tr_course_init(&course, 1);
-    tr_render_world(&fb, &course, &assets, 0);
+    tr_render_world(&fb, &course, &assets, 0, false);
     FILE *f = fopen(argv[1], "wb");
     if (!f) { perror(argv[1]); return 1; }
     fprintf(f, "P6\n%d %d\n255\n", TR_WIDTH, TR_HEIGHT);

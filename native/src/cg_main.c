@@ -96,7 +96,7 @@ int main(void)
         input.tilt = keydown(KEY_6) - keydown(KEY_4);
         if (!input.tilt) input.tilt = keydown(KEY_RIGHT) - keydown(KEY_LEFT);
         tr_session_advance(&session, input, elapsed, (int)rtc_ticks());
-        tr_render_world(&frame, &session.course, &assets, session.runner.height);
+        tr_render_world(&frame, &session.course, &assets, session.runner.height, session.runner.sliding);
         /* gint exposes a 396x224 RGB565 framebuffer, with no extra row stride. */
         for (int y = 0; y < TR_HEIGHT; y++) {
             TRPixelPair *row0 = (TRPixelPair *)&gint_vram[(y * 2 + 4) * DWIDTH + 6];
