@@ -179,6 +179,9 @@ The add-in is run in the open-source
 [emuCasioCalc](https://github.com/joserodpt/emuCasioCalc) fx-CG50 add-in
 emulator. The emulator does not establish real calculator performance or
 complete input correctness, and no physical calculator has been tested.
+The emulator does not show the calculator's system menu: MENU immediately
+returns to the paused game, while Quit or EXIT attempts to save the score and
+starts a new run. Close the emulator window to stop it.
 
 `tests/emulator-opening.txt`, `tests/emulator-pause.txt`,
 `tests/emulator-turn.txt` and `tests/emulator-restart.txt` are manual key
