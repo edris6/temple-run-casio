@@ -98,8 +98,13 @@ static int64_t gradient(int va, int vb, int vc, int da, int db, int dc, int area
     return ((int64_t)va*da + (int64_t)vb*db + (int64_t)vc*dc) / area;
 }
 
+static int64_t signed_u32(uint32_t value)
+{
+    return value <= INT32_MAX ? (int64_t)value : (int64_t)value - 4294967296LL;
+}
+
 static void triangle(TRFramebuffer *fb, Projected a, Projected b, Projected c,
-    uint16_t color, const uint16_t *texture)
+    uint16_t color, const uint16_t *texture, bool perspective)
 {
     int area = edge(a, b, c.x, c.y);
     if (!area) return;
@@ -125,12 +130,23 @@ static void triangle(TRFramebuffer *fb, Projected a, Projected b, Projected c,
     int64_t z0 = a.inv_z + zx*(left-a.x) + zy*(top-a.y);
     int64_t u0 = 0, v0 = 0, ux = 0, vx = 0, uy = 0, vy = 0;
     if (texture) {
-        ux = gradient(a.u,b.u,c.u,dx0,dx1,dx2,area);
-        vx = gradient(a.v,b.v,c.v,dx0,dx1,dx2,area);
-        uy = gradient(a.u,b.u,c.u,dy0,dy1,dy2,area);
-        vy = gradient(a.v,b.v,c.v,dy0,dy1,dy2,area);
-        u0 = a.u + ux*(left-a.x) + uy*(top-a.y);
-        v0 = a.v + vx*(left-a.x) + vy*(top-a.y);
+        int au = a.u, bu = b.u, cu = c.u, av = a.v, bv = b.v, cv = c.v;
+        /* The imported floor UVs fit this range. Other meshes keep their
+         * existing affine path, which also handles unusually large UVs. */
+        if (perspective && (au < -16777216 || au > 16777216 || bu < -16777216 || bu > 16777216 ||
+            cu < -16777216 || cu > 16777216 || av < -16777216 || av > 16777216 ||
+            bv < -16777216 || bv > 16777216 || cv < -16777216 || cv > 16777216)) perspective = false;
+        if (perspective) {
+            au = (int)((int64_t)au*a.inv_z/65536); bu = (int)((int64_t)bu*b.inv_z/65536);
+            cu = (int)((int64_t)cu*c.inv_z/65536); av = (int)((int64_t)av*a.inv_z/65536);
+            bv = (int)((int64_t)bv*b.inv_z/65536); cv = (int)((int64_t)cv*c.inv_z/65536);
+        }
+        ux = gradient(au,bu,cu,dx0,dx1,dx2,area);
+        vx = gradient(av,bv,cv,dx0,dx1,dx2,area);
+        uy = gradient(au,bu,cu,dy0,dy1,dy2,area);
+        vy = gradient(av,bv,cv,dy0,dy1,dy2,area);
+        u0 = au + ux*(left-a.x) + uy*(top-a.y);
+        v0 = av + vx*(left-a.x) + vy*(top-a.y);
     }
     int row0 = edge(a,b,left,top), row1 = edge(b,c,left,top), row2 = edge(c,a,left,top);
     /* Texture lookup uses the low 32 bits. Depth at covered pixels is bounded
@@ -141,6 +157,8 @@ static void triangle(TRFramebuffer *fb, Projected a, Projected b, Projected c,
     for (int y = top; y <= bottom; y++) {
         int e0 = row0, e1 = row1, e2 = row2;
         uint32_t z = row_z, u = row_u, v = row_v;
+        int64_t corrected_u = 0, corrected_v = 0, step_u = 0, step_v = 0;
+        bool correction_started = false;
         for (int x = left; x <= right; x++) {
             if ((area > 0 && e0 >= 0 && e1 >= 0 && e2 >= 0) ||
                 (area < 0 && e0 <= 0 && e1 <= 0 && e2 <= 0)) {
@@ -150,12 +168,27 @@ static void triangle(TRFramebuffer *fb, Projected a, Projected b, Projected c,
                 if (depth > fb->depth[i]) {
                     fb->depth[i] = depth;
                     if (texture) {
-                        fb->pixels[i] = texture[((v >> 16) & 127u) * 128 + ((u >> 16) & 127u)];
+                        uint32_t tu = u, tv = v;
+                        if (perspective && z && !(z & 0x80000000u)) {
+                            if (!correction_started) {
+                                /* On a horizontal floor with a level camera,
+                                 * depth is approximately constant across a row. */
+                                corrected_u = signed_u32(u)*65536 / z;
+                                corrected_v = signed_u32(v)*65536 / z;
+                                step_u = ux*65536 / z;
+                                step_v = vx*65536 / z;
+                                correction_started = true;
+                            }
+                            tu = (uint32_t)corrected_u;
+                            tv = (uint32_t)corrected_v;
+                        }
+                        fb->pixels[i] = texture[((tv >> 16) & 127u) * 128 + ((tu >> 16) & 127u)];
                     } else fb->pixels[i] = color;
                 }
             }
             e0 += b.y-a.y; e1 += c.y-b.y; e2 += a.y-c.y;
             z += (uint32_t)zx; u += (uint32_t)ux; v += (uint32_t)vx;
+            if (correction_started) { corrected_u += step_u; corrected_v += step_v; }
         }
         row0 -= b.x-a.x; row1 -= c.x-b.x; row2 -= a.x-c.x;
         row_z += (uint32_t)zy; row_u += (uint32_t)uy; row_v += (uint32_t)vy;
@@ -234,6 +267,16 @@ static int fixed_clip(const FixedVertex in[3], FixedVertex out[4])
     return count;
 }
 
+/* The reference temple floor is a flat plane at this prefab-local height.
+ * Walls, coins and other meshes retain their existing texture mapping. */
+static bool is_floor_face(const TRMesh *mesh, int kind, unsigned a, unsigned b, unsigned c)
+{
+    bool floor_mesh = kind == 1 || (kind >= 6 && kind <= 10) || (kind >= 14 && kind <= 17);
+    if (!floor_mesh) return false;
+    int ya = mesh->fixed_vertices[a][1], yb = mesh->fixed_vertices[b][1], yc = mesh->fixed_vertices[c][1];
+    return ya >= -145 && ya <= -143 && yb >= -145 && yb <= -143 && yc >= -145 && yc <= -143;
+}
+
 static void fixed_mesh(TRFramebuffer *fb, const TRMesh *m, Transform t, uint16_t base)
 {
     int ox = (int)((t.tile_x-t.camera_x)*16), oz = (int)((t.tile_z-t.camera_z)*16);
@@ -264,8 +307,9 @@ static void fixed_mesh(TRFramebuffer *fb, const TRMesh *m, Transform t, uint16_t
         unsigned ia = m->indices[i], ib = m->indices[i+1], ic = m->indices[i+2];
         if (ia >= m->vertex_count || ib >= m->vertex_count || ic >= m->vertex_count) continue;
         uint16_t color = (uint16_t)(base + ((i / 3) % 3) * 0x0821);
+        bool perspective = is_floor_face(m, t.kind, ia, ib, ic);
         if (fixed_valid[ia] && fixed_valid[ib] && fixed_valid[ic]) {
-            triangle(fb, fixed_projected[ia], fixed_projected[ib], fixed_projected[ic], color, m->texture);
+            triangle(fb, fixed_projected[ia], fixed_projected[ib], fixed_projected[ic], color, m->texture, perspective);
         } else {
             FixedVertex in[3] = {fixed_cache[ia], fixed_cache[ib], fixed_cache[ic]}, clipped[4];
             int n = fixed_clip(in, clipped), valid = 1;
@@ -274,7 +318,7 @@ static void fixed_mesh(TRFramebuffer *fb, const TRMesh *m, Transform t, uint16_t
                 if (!fixed_project(clipped[k], &p[k])) { valid = 0; break; }
             }
             if (valid) for (int k = 1; k + 1 < n; k++)
-                triangle(fb, p[0], p[k], p[k+1], color, m->texture);
+                triangle(fb, p[0], p[k], p[k+1], color, m->texture, perspective);
         }
     }
 }
@@ -299,7 +343,7 @@ static void mesh(TRFramebuffer *fb, const TRMesh *m, Transform t, uint16_t base)
         unsigned ids[] = {ia,ib,ic};
         if (cache && projection_valid[ia] && projection_valid[ib] && projection_valid[ic]) {
             triangle(fb, projection_cache[ia], projection_cache[ib], projection_cache[ic],
-                (uint16_t)(base + ((i / 3) % 3) * 0x0821), m->uvs ? m->texture : NULL);
+                (uint16_t)(base + ((i / 3) % 3) * 0x0821), m->uvs ? m->texture : NULL, false);
             continue;
         }
         ClipVertex input[3], clipped[4];
@@ -320,7 +364,7 @@ static void mesh(TRFramebuffer *fb, const TRMesh *m, Transform t, uint16_t base)
         if (!valid) continue;
         for (int k = 1; k + 1 < count; k++)
             triangle(fb, p[0],p[k],p[k+1],
-                (uint16_t)(base + ((i / 3) % 3) * 0x0821), m->uvs ? m->texture : NULL);
+                (uint16_t)(base + ((i / 3) % 3) * 0x0821), m->uvs ? m->texture : NULL, false);
     }
 }
 

@@ -7,6 +7,17 @@ provenance.
 
 ## Renderer and display optimization
 
+The flat temple-floor faces now use approximate perspective-correct texture
+mapping. The earlier affine mapping visibly distorted nearby paving stones.
+Other faces, including coins, retain their previous mapping. This applies to
+flat faces at prefab-local height −9; irregular hole surfaces still use affine
+mapping. The row-wise correction assumes a level, unrolled camera and is an
+approximation during integer projection and turns.
+
+In the same four-second emulator scenario described below, a diagnostic build
+with the floor correction displayed about 41 frames versus about 48 without it.
+This is an emulator-only estimate; physical performance remains unknown.
+
 The triangle loop now uses 32-bit wrapping accumulators, a 25 KB reciprocal
 cache avoids repeated projection divisions, and the display code initializes
 both gint VRAM buffers once and writes aligned pairs of pixels. Resolution and
@@ -45,9 +56,9 @@ Physical VRAM/DMA behavior and performance still need a calculator test.
   tree and first left turn in the fx-CG50 add-in emulator. An instrumented
   temporary setup confirmed arrow-key sideways movement, a gap jump and a
   fall when the same gap was not jumped.
-- In one instrumented four-second emulator run, the optimized higher-resolution
-  opening displayed roughly 48 frames, versus roughly 41 before optimization.
-  This is not a physical-device FPS measurement.
+- In one instrumented four-second emulator run, the current floor correction
+  displayed roughly 41 frames, versus roughly 48 immediately before it. This
+  is not a physical-device FPS measurement.
 - Native host checks run with `make -C native test`; Python asset-converter
   checks run with `python3 -m unittest discover -s tests -v`. The C checks were
   also run with AddressSanitizer and UndefinedBehaviorSanitizer.
